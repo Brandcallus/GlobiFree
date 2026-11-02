@@ -30,8 +30,8 @@ def get_base_ydl_opts():
     opts = {
         "quiet": True,
         "no_warnings": True,
-        # Mobile clients for bot bypass
-        "extractor_args": {"youtube": {"player_client": ["android", "ios", "tv", "web_creator"]}}
+        # 🔥 THE REAL FIX: Removed buggy android/ios. 'tv' and 'web_creator' give standard formats & bypass bots.
+        "extractor_args": {"youtube": {"player_client": ["tv", "web_creator"]}}
     }
     
     if os.path.exists(COOKIE_FILE):
@@ -80,8 +80,8 @@ async def get_media_info(url: str = Form(...)):
         ydl_opts = get_base_ydl_opts()
         ydl_opts["skip_download"] = True
         
-        # 🔥 THE REAL FIX: Accept separate video+audio streams (mobile standard) as well as combined 'best' files.
-        ydl_opts["format"] = "bestvideo+bestaudio/best/b"
+        # 🔥 Industry standard yt-dlp robust format syntax
+        ydl_opts["format"] = "bv*+ba/b"
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -124,18 +124,17 @@ async def download_media(
     ydl_opts["nopart"] = True
 
     if mode == "audio":
-        ydl_opts["format"] = "bestaudio/best"
+        ydl_opts["format"] = "ba/b"
         ydl_opts["postprocessors"] = [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": format_type,
             "preferredquality": quality if quality.isdigit() else "320",
         }]
     else:
-        # Ultimate fallback for downloading as well
         if quality == "best":
-            ydl_opts["format"] = "bestvideo+bestaudio/best/b"
+            ydl_opts["format"] = "bv*+ba/b"
         else:
-            ydl_opts["format"] = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/bestvideo+bestaudio/best/b"
+            ydl_opts["format"] = f"bv*[height<={quality}]+ba/b[height<={quality}] / bv*+ba/b"
 
         if is_muted:
             ydl_opts["postprocessors"] = [{
@@ -163,7 +162,17 @@ async def download_media(
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+            # 🔥 ULTRA FALLBACK: If standard quality format fails, catch it and force best universal format.
+            try:
+                info = ydl.extract_info(url, download=True)
+            except yt_dlp.utils.DownloadError as de:
+                if "Requested format is not available" in str(de):
+                    ydl_opts["format"] = "bv*+ba/b"
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl2:
+                        info = ydl2.extract_info(url, download=True)
+                else:
+                    raise de
+                    
             prepared_path = ydl.prepare_filename(info)
             base_path = os.path.splitext(prepared_path)[0]
             expected_ext = f".{format_type}"
