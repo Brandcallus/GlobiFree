@@ -3,6 +3,8 @@ import re
 import uuid
 import shutil
 import subprocess
+import time
+import random
 from pathlib import Path
 from typing import Optional
 
@@ -24,11 +26,9 @@ app.add_middleware(
 TEMP_DIR = Path("/tmp/globifree_downloads")
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
-
 def sanitize_filename(name: str) -> str:
     cleaned = re.sub(r'[\\/*?:"<>|]', "", name).strip()
     return cleaned[:120] if cleaned else "GlobiFree_Media"
-
 
 def cleanup_dir(path: Path):
     try:
@@ -36,7 +36,6 @@ def cleanup_dir(path: Path):
             shutil.rmtree(path, ignore_errors=True)
     except Exception:
         pass
-
 
 def format_duration(seconds: Optional[int]) -> str:
     if not seconds:
@@ -48,26 +47,28 @@ def format_duration(seconds: Optional[int]) -> str:
         return f"{hrs:02d}:{mins:02d}:{secs:02d}"
     return f"{mins:02d}:{secs:02d}"
 
-
 def get_yt_dlp_base_opts():
     return {
         "quiet": True,
         "no_warnings": True,
         "nocheckcertificate": True,
         "geo_bypass": True,
-        "impersonate": "chrome110",  # Bypasses 403 Forbidden by mimicking a real Google Chrome browser
+        # Rotate impersonate targets randomly to avoid static fingerprinting
+        "impersonate": random.choice(["chrome110", "safari_ios", "edge99"]),
         "js_runtimes": {"deno": {}, "node": {}},
+        "sleep_interval": 2, # Adds a small delay to avoid hitting rate limits instantly
+        "max_sleep_interval": 5,
     }
 
-
 def extract_info_with_fallback(url: str):
-    # yt-dlp strategies
+    # Rotate client strategies to confuse the rate-limiter
     client_strategies = [
         {"youtube": {"player_client": ["android", "web"]}},
         {"youtube": {"player_client": ["ios", "android_vr"]}},
         {"youtube": {"player_client": ["tv", "mweb"]}},
         None
     ]
+    random.shuffle(client_strategies) 
     
     last_err = None
     for ext_args in client_strategies:
@@ -79,26 +80,32 @@ def extract_info_with_fallback(url: str):
                 return ydl.extract_info(url, download=False)
         except Exception as e:
             last_err = e
+            time.sleep(1.5) # Wait before trying the next client
 
-    # Fallback to pytubefix for YouTube URLs testing multiple mobile/TV clients
+    # Fallback to pytubefix for YouTube URLs
     if "youtube.com" in url or "youtu.be" in url:
-        from pytubefix import YouTube
-        # Mobile and VR clients generally bypass 403 better than standard WEB
-        for client in ["ANDROID_VR", "TV", "IOS", "ANDROID", "WEB"]:
-            try:
-                yt = YouTube(url, client=client)
-                return {
-                    "title": yt.title,
-                    "uploader": yt.author,
-                    "duration": yt.length,
-                    "thumbnail": yt.thumbnail_url,
-                    "extractor": "youtube",
-                }
-            except Exception as e:
-                last_err = e
+        try:
+            from pytubefix import YouTube
+            fallback_clients = ["ANDROID_VR", "TV", "IOS", "ANDROID", "WEB"]
+            random.shuffle(fallback_clients)
+            
+            for client in fallback_clients:
+                try:
+                    yt = YouTube(url, client=client)
+                    return {
+                        "title": yt.title,
+                        "uploader": yt.author,
+                        "duration": yt.length,
+                        "thumbnail": yt.thumbnail_url,
+                        "extractor": "youtube",
+                    }
+                except Exception as e:
+                    last_err = e
+                    time.sleep(1.5)
+        except ImportError:
+            pass
 
-    raise HTTPException(status_code=400, detail=f"Failed to fetch info: {str(last_err)}")
-
+    raise HTTPException(status_code=429, detail=f"Rate Limit Hit. Please try again in a few minutes. (Error: {str(last_err)})")
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_home():
@@ -106,7 +113,6 @@ async def serve_home():
     if html_path.exists():
         return html_path.read_text(encoding="utf-8")
     return "<h1>index.html not found</h1>"
-
 
 @app.api_route("/api/info", methods=["GET", "POST"])
 async def api_info(
@@ -131,7 +137,6 @@ async def api_info(
         "max_quality": "1080P HD",
     }
 
-
 def download_with_pytubefix(
     url: str,
     job_dir: Path,
@@ -144,16 +149,20 @@ def download_with_pytubefix(
 ) -> Path:
     from pytubefix import YouTube
 
-    # Try multiple clients for 403 bypass
+    # Try multiple clients randomly for 403/429 bypass
     yt = None
     last_e = None
-    for client in ["ANDROID_VR", "TV", "IOS", "ANDROID"]:
+    fallback_clients = ["ANDROID_VR", "TV", "IOS", "ANDROID"]
+    random.shuffle(fallback_clients)
+    
+    for client in fallback_clients:
         try:
             yt = YouTube(url, client=client)
-            _ = yt.title  # Trigger fetch to ensure it works
+            _ = yt.title  
             break
         except Exception as e:
             last_e = e
+            time.sleep(1)
     
     if not yt:
         raise Exception(f"pytubefix all clients failed: {str(last_e)}")
@@ -201,7 +210,6 @@ def download_with_pytubefix(
     subprocess.run(cmd, check=True)
     return out_file
 
-
 @app.post("/api/download")
 async def api_download(
     background_tasks: BackgroundTasks,
@@ -228,6 +236,7 @@ async def api_download(
         {"youtube": {"player_client": ["tv", "mweb"]}},
         None
     ]
+    random.shuffle(client_strategies)
 
     downloaded_file: Optional[Path] = None
     last_error = None
@@ -273,6 +282,7 @@ async def api_download(
                 break
         except Exception as e:
             last_error = e
+            time.sleep(1.5)
             for f in job_dir.glob("*"):
                 f.unlink(missing_ok=True)
 
@@ -288,8 +298,8 @@ async def api_download(
     if not downloaded_file or not downloaded_file.exists():
         cleanup_dir(job_dir)
         raise HTTPException(
-            status_code=500,
-            detail=f"Download failed: {str(last_error) if last_error else 'Unknown error'}",
+            status_code=429,
+            detail=f"Rate limit or download failed: {str(last_error) if last_error else 'Too many requests'}",
         )
 
     final_ext = downloaded_file.suffix.lstrip(".") or format_type
