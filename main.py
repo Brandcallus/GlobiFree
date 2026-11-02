@@ -60,7 +60,12 @@ async def serve_ui():
 @app.post("/api/info")
 async def get_media_info(url: str = Form(...)):
     try:
-        ydl_opts = {"quiet": True, "no_warnings": True, "skip_download": True}
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extractor_args": {"youtube": {"player_client": ["ios", "android", "mweb", "web"]}}
+        }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             formats = info.get("formats", [])
@@ -85,10 +90,10 @@ async def get_media_info(url: str = Form(...)):
 async def download_media(
     background_tasks: BackgroundTasks,
     url: str = Form(...),
-    mode: str = Form("video"),             # "video" or "audio"
-    format_type: str = Form("mp4"),        # mp4, webm, mkv, mov OR mp3, m4a, wav, flac, opus
-    quality: str = Form("720"),            # 2160, 1440, 1080, 720, 480, 360, 240, 144, best OR audio kbps
-    mute_video: str = Form("false"),       # "true" or "false"
+    mode: str = Form("video"),
+    format_type: str = Form("mp4"),
+    quality: str = Form("720"),
+    mute_video: str = Form("false"),
     custom_title: Optional[str] = Form(None),
     start_time: Optional[str] = Form(None),
     end_time: Optional[str] = Form(None),
@@ -102,9 +107,9 @@ async def download_media(
         "quiet": True,
         "no_warnings": True,
         "nopart": True,
+        "extractor_args": {"youtube": {"player_client": ["ios", "android", "mweb", "web"]}},
     }
 
-    # 1. Audio-Only Mode vs Video Mode (with optional Mute)
     if mode == "audio":
         ydl_opts["format"] = "bestaudio/best"
         ydl_opts["postprocessors"] = [{
@@ -113,11 +118,9 @@ async def download_media(
             "preferredquality": quality if quality.isdigit() else "320",
         }]
     else:
-        # Video Mode
         height_filter = "" if quality == "best" else f"[height<={quality}]"
 
         if is_muted:
-            # Download video stream only (Muted Video)
             if format_type == "mp4":
                 ydl_opts["format"] = f"bestvideo{height_filter}[ext=mp4]/bestvideo{height_filter}/best{height_filter}"
             else:
@@ -128,7 +131,6 @@ async def download_media(
             }]
             ydl_opts["postprocessor_args"] = ["-an"]
         else:
-            # Standard Video + Audio
             if format_type == "mp4":
                 ydl_opts["format"] = (
                     f"bestvideo{height_filter}[ext=mp4]+bestaudio[ext=m4a]/"
@@ -138,7 +140,6 @@ async def download_media(
                 ydl_opts["format"] = f"bestvideo{height_filter}+bestaudio/best{height_filter}/best"
             ydl_opts["merge_output_format"] = format_type
 
-    # 2. Trim / Clip Handling
     start_sec = parse_time_to_seconds(start_time)
     end_sec = parse_time_to_seconds(end_time)
 
@@ -154,7 +155,6 @@ async def download_media(
         ydl_opts["download_ranges"] = download_range_func(None, [(start_sec, end_sec)])
         ydl_opts["force_keyframes_at_cuts"] = True
 
-    # 3. Run Extraction & Stream Response
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
