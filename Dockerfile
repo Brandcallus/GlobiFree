@@ -1,12 +1,14 @@
 FROM python:3.11-slim
 
-# ffmpeg ke sath nodejs install karna zaroori hai YouTube JS cipher solve karne ke liye
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     nodejs \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Global yt-dlp config taaki NodeJS aur EJS challenge solver hamesha on rahe
+RUN printf "--js-runtimes node\n--remote-components ejs:github\n" > /etc/yt-dlp.conf
 
 WORKDIR /app
 
