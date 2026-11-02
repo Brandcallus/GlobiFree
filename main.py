@@ -22,7 +22,6 @@ app.add_middleware(
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# 1. FIX: Absolute Path lagaya taaki Render ise har haal me dhoondh le
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 COOKIE_FILE = os.path.join(BASE_DIR, "cookies.txt")
 
@@ -31,11 +30,11 @@ def get_base_ydl_opts():
     opts = {
         "quiet": True,
         "no_warnings": True,
-        # 2. FIX: 'tv' aur 'web_creator' add kiye jo bot-check jaldi bypass karte hain
+        # YAHAN FIX HAI: "format" fallback dal diya taaki info nikalte waqt kabhi crash na ho
+        "format": "bestvideo+bestaudio/best",
         "extractor_args": {"youtube": {"player_client": ["android", "ios", "tv", "web_creator"]}}
     }
     
-    # 3. FIX: Server Logs me check karne ke liye print statement
     if os.path.exists(COOKIE_FILE):
         print(f"✅ COOKIE FILE FOUND AND LOADED: {COOKIE_FILE}")
         opts["cookiefile"] = COOKIE_FILE
@@ -136,6 +135,7 @@ async def download_media(
         if quality == "best":
             ydl_opts["format"] = "bestvideo+bestaudio/best"
         else:
+            # SUPER ROBUST FALLBACK - Ab format error nahi aayega
             ydl_opts["format"] = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/bestvideo+bestaudio/best"
 
         if is_muted:
