@@ -26,7 +26,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Disposition"],
+    expose_headers=["Content-Disposition", "Content-Length"],
 )
 
 DOWNLOAD_DIR = "downloads"
@@ -35,8 +35,16 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+def normalize_media_url(url: str) -> str:
+    """youtu.be ya tracking params (?si=...) hata kar clean URL banata hai taaki redirect time bache."""
+    url = url.strip()
+    yt_match = re.search(r"(?:youtu\.be/|youtube\.com/(?:watch\?v=|shorts/|embed/))([A-Za-z0-9_-]{11})", url)
+    if yt_match:
+        return f"https://www.youtube.com/watch?v={yt_match.group(1)}"
+    return url
+
+
 def find_master_cookie_file() -> Optional[str]:
-    """BASE_DIR mein cookies.txt ya COOKIES.TXT (case-insensitive) dhoondta hai."""
     for fname in os.listdir(BASE_DIR):
         if fname.lower() == "cookies.txt":
             fpath = os.path.join(BASE_DIR, fname)
@@ -46,7 +54,6 @@ def find_master_cookie_file() -> Optional[str]:
 
 
 def create_temp_cookie_file(unique_id: str) -> Optional[str]:
-    """Master cookies file ko normalize karke safe temp copy banata hai."""
     master_cookie = find_master_cookie_file()
     if not master_cookie:
         return None
@@ -75,7 +82,6 @@ def cleanup_files(*filepaths: str):
 
 
 def get_ejs_runtime_opts() -> dict:
-    """yt-dlp ke liye NodeJS runtime aur EJS solver options generate karta hai."""
     try:
         parsed = yt_dlp.parse_options([
             "--js-runtimes", "node",
@@ -90,82 +96,6 @@ def get_ejs_runtime_opts() -> dict:
 
 
 EJS_OPTS = get_ejs_runtime_opts()
-
-
-def has_playable_formats(info: Optional[dict]) -> bool:
-    """Verify karta hai ki sirf storyboard images nahi balki asli video/audio stream mili hai."""
-    if not info:
-        return False
-    formats = info.get("formats") or []
-    for f in formats:
-        ext = f.get("ext")
-        vcodec = f.get("vcodec")
-        acodec = f.get("acodec")
-        if ext == "mhtml" or vcodec == "images":
-            continue
-        if (vcodec and vcodec != "none") or (acodec and acodec != "none"):
-            if f.get("url") or f.get("manifest_url"):
-                return True
-    return bool(info.get("url"))
-
-
-def get_strategy_configs(temp_cookie: Optional[str]):
-    strategies = []
-
-    # Strategy 1: Cookies + Default/Web/TV clients (with NodeJS EJS solver)
-    if temp_cookie:
-        strategies.append({
-            "use_cookie": True,
-            "extractor_args": {},
-        })
-        strategies.append({
-            "use_cookie": True,
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["tv", "mweb", "web_creator", "web_safari"],
-                }
-            },
-        })
-
-    # Strategy 2: Bina cookies ke mobile/safari clients
-    strategies.append({
-        "use_cookie": False,
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["android_vr", "ios", "web_safari", "tv"],
-            }
-        },
-    })
-
-    # Strategy 3: Bina cookies ke pure default
-    strategies.append({
-        "use_cookie": False,
-        "extractor_args": {},
-    })
-
-    return strategies
-
-
-def build_ydl_opts(base_opts: dict, strategy: dict, temp_cookie: Optional[str]) -> dict:
-    opts = dict(base_opts)
-    opts.update(EJS_OPTS)
-    opts.update({
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "geo_bypass": True,
-        "nocheckcertificate": True,
-    })
-    if strategy.get("extractor_args"):
-        opts["extractor_args"] = strategy["extractor_args"]
-    else:
-        opts.pop("extractor_args", None)
-
-    if strategy.get("use_cookie") and temp_cookie and os.path.exists(temp_cookie):
-        opts["cookiefile"] = temp_cookie
-    else:
-        opts.pop("cookiefile", None)
-    return opts
 
 
 def parse_time_to_seconds(time_str: Optional[str]) -> Optional[float]:
@@ -186,20 +116,41 @@ def sanitize_filename(name: str) -> str:
     return cleaned.strip()[:100] or "Globifree_Media"
 
 
-def fetch_oembed_fallback(url: str) -> dict:
-    oembed_url = f"https://www.youtube.com/oembed?url={urllib.parse.quote(url)}&format=json"
-    req = urllib.request.Request(oembed_url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=8) as response:
-        data = json.loads(response.read().decode("utf-8"))
+def fast_youtube_info(url: str) -> Optional[dict]:
+    """YouTube videos ke liye 0.5 second mein title, thumbnail aur real duration nikalta hai."""
+    try:
+        clean_url = normalize_media_url(url)
+        oembed_url = f"https://www.youtube.com/oembed?url={urllib.parse.quote(clean_url)}&format=json"
+        req = urllib.request.Request(oembed_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=4) as response:
+            data = json.loads(response.read().decode("utf-8"))
+
+        duration = 240
+        # Real duration nikalne ke liye fast watch page regex check
+        try:
+            watch_req = urllib.request.Request(
+                clean_url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            )
+            with urllib.request.urlopen(watch_req, timeout=4) as w_resp:
+                html_chunk = w_resp.read(350000).decode("utf-8", errors="ignore")
+                dur_match = re.search(r'"lengthSeconds"\s*:\s*"(\d+)"', html_chunk)
+                if dur_match:
+                    duration = int(dur_match.group(1))
+        except Exception:
+            pass
+
         return {
             "title": data.get("title", "YouTube_Video"),
             "thumbnail": data.get("thumbnail_url", ""),
-            "duration": 240,
+            "duration": duration,
             "uploader": data.get("author_name", "YouTube Creator"),
             "platform": "YouTube",
             "max_resolution": "1080p HD",
-            "available_heights": [1080, 720, 480, 360],
+            "available_heights": [1080, 720, 480, 360, 240, 144],
         }
+    except Exception:
+        return None
 
 
 def download_with_pytubefix(
@@ -212,11 +163,11 @@ def download_with_pytubefix(
     start_sec: Optional[float],
     end_sec: Optional[float],
 ) -> Tuple[str, str]:
-    """Backup Engine: Agar yt-dlp fail ho jaye toh pytubefix + ffmpeg se download karega."""
+    """Fast Backup Engine: pytubefix + ffmpeg."""
     if not HAS_PYTUBEFIX or ("youtube.com" not in url.lower() and "youtu.be" not in url.lower()):
         raise RuntimeError("Secondary engine unavailable for this URL.")
 
-    clients = ["ANDROID_VR", "MWEB", "IOS", "TV", "WEB"]
+    clients = ["IOS", "ANDROID_VR", "MWEB", "WEB"]
     last_err = None
 
     for client_name in clients:
@@ -235,13 +186,12 @@ def download_with_pytubefix(
                 astream = (
                     yt.streams.filter(only_audio=True).order_by("abr").desc().first()
                     or yt.streams.get_audio_only()
-                    or yt.streams.get_highest_resolution()
                 )
                 if not astream:
                     continue
                 raw_audio = astream.download(output_path=DOWNLOAD_DIR, filename=f"{unique_id}_raw_audio")
                 bitrate = f"{quality}k" if quality.isdigit() else "320k"
-                cmd = ["ffmpeg", "-y", *trim_args, "-i", raw_audio]
+                cmd = ["ffmpeg", "-y", "-threads", "0", *trim_args, "-i", raw_audio]
                 if format_type == "mp3":
                     cmd += ["-vn", "-acodec", "libmp3lame", "-b:a", bitrate, final_path]
                 elif format_type == "m4a":
@@ -259,49 +209,80 @@ def download_with_pytubefix(
 
             else:
                 target_h = int(quality) if quality.isdigit() else 4320
-                video_candidates = [
-                    s for s in yt.streams.filter(type="video")
-                    if getattr(s, "height", None)
-                ]
-                video_candidates.sort(key=lambda s: s.height, reverse=True)
-                under_or_eq = [s for s in video_candidates if s.height <= target_h]
-                vstream = (
-                    under_or_eq[0]
-                    if under_or_eq
-                    else (video_candidates[-1] if video_candidates else yt.streams.get_highest_resolution())
-                )
+
+                # Helper: parse "720p" -> 720
+                def get_res_int(s) -> int:
+                    res = getattr(s, "resolution", None)
+                    if res and isinstance(res, str) and res.endswith("p") and res[:-1].isdigit():
+                        return int(res[:-1])
+                    return 0
+
+                # Agar <= 720p MP4 chahiye aur progressive stream hai toh direct 1-file download karo (Super Fast!)
+                vstream = None
+                if target_h <= 720 and not is_muted:
+                    prog_streams = [
+                        s for s in yt.streams.filter(progressive=True, file_extension="mp4")
+                        if get_res_int(s) > 0
+                    ]
+                    prog_streams.sort(key=get_res_int, reverse=True)
+                    under_prog = [s for s in prog_streams if get_res_int(s) <= target_h]
+                    if under_prog:
+                        vstream = under_prog[0]
+                    elif prog_streams:
+                        vstream = prog_streams[0]
+
+                if not vstream:
+                    video_candidates = [
+                        s for s in yt.streams.filter(type="video")
+                        if get_res_int(s) > 0
+                    ]
+                    video_candidates.sort(key=get_res_int, reverse=True)
+                    under_or_eq = [s for s in video_candidates if get_res_int(s) <= target_h]
+                    vstream = (
+                        under_or_eq[0]
+                        if under_or_eq
+                        else (video_candidates[-1] if video_candidates else yt.streams.get_highest_resolution())
+                    )
+
                 if not vstream:
                     continue
 
                 raw_video = vstream.download(output_path=DOWNLOAD_DIR, filename=f"{unique_id}_raw_video")
 
+                # Agar progressive MP4 hai aur trim/mute nahi hai, toh bina FFmpeg ke seedha rename karke bhej do!
+                if vstream.is_progressive and not is_muted and not trim_args and format_type == "mp4":
+                    os.replace(raw_video, final_path)
+                    return final_path, title
+
                 if is_muted:
                     cmd = [
-                        "ffmpeg", "-y", *trim_args,
+                        "ffmpeg", "-y", "-threads", "0", *trim_args,
                         "-i", raw_video,
-                        "-an", "-c:v", "copy" if format_type == "mp4" and not trim_args else "libx264",
+                        "-an", "-c:v", "copy" if (format_type == "mp4" and not trim_args) else "libx264",
+                        "-preset", "ultrafast",
                         final_path,
                     ]
                     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 elif vstream.is_progressive:
                     cmd = [
-                        "ffmpeg", "-y", *trim_args,
+                        "ffmpeg", "-y", "-threads", "0", *trim_args,
                         "-i", raw_video,
-                        "-c", "copy" if format_type == "mp4" and not trim_args else "libx264",
+                        "-c", "copy" if (format_type == "mp4" and not trim_args) else "libx264",
+                        "-preset", "ultrafast",
                         final_path,
                     ]
                     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 else:
                     astream = (
-                        yt.streams.filter(only_audio=True).order_by("abr").desc().first()
-                        or yt.streams.get_audio_only()
+                        yt.streams.filter(only_audio=True, subtype="mp4").order_by("abr").desc().first()
+                        or yt.streams.filter(only_audio=True).order_by("abr").desc().first()
                     )
                     if astream:
                         raw_audio = astream.download(output_path=DOWNLOAD_DIR, filename=f"{unique_id}_raw_audio")
                         v_codec = "copy" if (format_type in ("mp4", "mkv") and not trim_args) else "libx264"
-                        a_codec = "aac" if format_type in ("mp4", "mov", "mkv") else "libopus"
+                        a_codec = "copy" if (format_type in ("mp4", "mkv") and astream.subtype == "mp4" and not trim_args) else "aac"
                         cmd = [
-                            "ffmpeg", "-y", *trim_args,
+                            "ffmpeg", "-y", "-threads", "0", *trim_args,
                             "-i", raw_video, "-i", raw_audio,
                             "-c:v", v_codec, "-c:a", a_codec,
                             "-shortest", final_path,
@@ -331,90 +312,45 @@ async def serve_ui():
 
 @app.post("/api/info")
 async def get_media_info(url: str = Form(...)):
-    unique_id = uuid.uuid4().hex[:8]
-    temp_cookie = create_temp_cookie_file(unique_id)
+    url = normalize_media_url(url)
     platform = "Instagram" if "instagram.com" in url.lower() else "YouTube"
 
+    # YouTube ke liye Instant 0.5s Metadata Fetcher (Bina 15 second wait kiye!)
+    if platform == "YouTube":
+        fast_info = fast_youtube_info(url)
+        if fast_info:
+            return fast_info
+
+    # Instagram ya fallback ke liye yt-dlp
+    unique_id = uuid.uuid4().hex[:8]
+    temp_cookie = create_temp_cookie_file(unique_id)
     try:
-        base_opts = {
+        ydl_opts = {
+            **EJS_OPTS,
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
             "skip_download": True,
+            "socket_timeout": 10,
         }
+        if temp_cookie:
+            ydl_opts["cookiefile"] = temp_cookie
 
-        info = None
-        last_error = None
-
-        for strategy in get_strategy_configs(temp_cookie):
-            try:
-                ydl_opts = build_ydl_opts(base_opts, strategy, temp_cookie)
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    extracted = ydl.extract_info(url, download=False)
-                    if has_playable_formats(extracted):
-                        info = extracted
-                        break
-            except Exception as e:
-                last_error = e
-                continue
-
-        if not info and HAS_PYTUBEFIX and platform == "YouTube":
-            for client_name in ["ANDROID_VR", "MWEB", "IOS", "WEB"]:
-                try:
-                    yt = PyTubeYouTube(url, client=client_name)
-                    if yt.title:
-                        return {
-                            "title": yt.title,
-                            "thumbnail": yt.thumbnail_url,
-                            "duration": yt.length or 240,
-                            "uploader": yt.author or "YouTube Creator",
-                            "platform": "YouTube",
-                            "max_resolution": "1080p HD",
-                            "available_heights": [1080, 720, 480, 360, 240],
-                        }
-                except Exception:
-                    continue
-
-        if not info:
-            if platform == "YouTube":
-                return fetch_oembed_fallback(url)
-            raise HTTPException(status_code=400, detail=f"Could not fetch details: {str(last_error)}")
-
-        formats = info.get("formats", [])
-        heights = sorted(
-            list({
-                f.get("height")
-                for f in formats
-                if f.get("height")
-                and isinstance(f.get("height"), int)
-                and f.get("vcodec") not in (None, "none", "images")
-                and f.get("ext") != "mhtml"
-            }),
-            reverse=True,
-        )
-
-        if not heights:
-            heights = [1080, 720, 480, 360, 240]
-
-        max_height = heights[0] if heights else 1080
-        thumb = info.get("thumbnail")
-        if not thumb and info.get("thumbnails"):
-            thumb = info.get("thumbnails")[-1].get("url")
-
-        return {
-            "title": info.get("title") or "Media_Video",
-            "thumbnail": thumb,
-            "duration": info.get("duration") or 240,
-            "uploader": info.get("uploader") or "Creator",
-            "platform": platform,
-            "max_resolution": f"{max_height}p HD",
-            "available_heights": heights,
-        }
-    except HTTPException:
-        raise
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            thumb = info.get("thumbnail")
+            if not thumb and info.get("thumbnails"):
+                thumb = info.get("thumbnails")[-1].get("url")
+            return {
+                "title": info.get("title") or "Media_Video",
+                "thumbnail": thumb,
+                "duration": info.get("duration") or 60,
+                "uploader": info.get("uploader") or "Creator",
+                "platform": platform,
+                "max_resolution": "1080p HD",
+                "available_heights": [1080, 720, 480, 360],
+            }
     except Exception as e:
-        if platform == "YouTube":
-            try:
-                return fetch_oembed_fallback(url)
-            except Exception:
-                pass
         raise HTTPException(status_code=400, detail=f"Metadata error: {str(e)}")
     finally:
         cleanup_files(temp_cookie)
@@ -432,30 +368,51 @@ async def download_media(
     start_time: Optional[str] = Form(None),
     end_time: Optional[str] = Form(None),
 ):
+    url = normalize_media_url(url)
     unique_id = uuid.uuid4().hex[:8]
     out_template = os.path.join(DOWNLOAD_DIR, f"{unique_id}.%(ext)s")
     is_muted = mute_video.lower() == "true"
     temp_cookie = create_temp_cookie_file(unique_id)
 
     base_opts = {
+        **EJS_OPTS,
         "outtmpl": out_template,
         "nopart": True,
-        "retries": 3,
-        "fragment_retries": 3,
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "geo_bypass": True,
+        "nocheckcertificate": True,
+        "socket_timeout": 12,
+        "retries": 2,
+        "fragment_retries": 2,
+        # 8x Parallel Fragment Download + 10MB chunks for high speed
+        "concurrent_fragment_downloads": 8,
+        "http_chunk_size": 10485760,
     }
 
     if mode == "audio":
-        base_opts["format"] = "ba/b"
+        base_opts["format"] = "ba[ext=m4a]/ba/b"
         base_opts["postprocessors"] = [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": format_type,
             "preferredquality": quality if quality.isdigit() else "320",
         }]
     else:
-        # Strict filter ke bajaye format_sort use karenge taaki 240p/360p/720p kabhi fail na ho
-        base_opts["format"] = "bv*+ba/b"
-        if quality != "best" and quality.isdigit():
-            base_opts["format_sort"] = [f"res:{quality}"]
+        # Fast MP4 preference taaki FFmpeg ko re-encode na karna pade
+        if quality != "best" and quality.isdigit() and int(quality) <= 720 and format_type == "mp4" and not is_muted:
+            # 720p ya kam ke liye pehle pre-merged single-file MP4 check karega (Instant Download!)
+            base_opts["format"] = (
+                f"b[height<={quality}][ext=mp4]/"
+                f"bv*[height<={quality}][ext=mp4]+ba[ext=m4a]/"
+                f"bv*[height<={quality}]+ba/b"
+            )
+        else:
+            base_opts["format"] = "bv*+ba/b"
+            if quality != "best" and quality.isdigit():
+                base_opts["format_sort"] = [f"res:{quality}", "ext:mp4:m4a"]
+            else:
+                base_opts["format_sort"] = ["ext:mp4:m4a"]
 
         if is_muted:
             base_opts["postprocessors"] = [{
@@ -473,20 +430,48 @@ async def download_media(
         base_opts["download_ranges"] = download_range_func(None, [(start_sec, end_sec)])
         base_opts["force_keyframes_at_cuts"] = True
 
+    # Sirf 2 fast attempts (No long waiting loops!):
+    # 1. Cookie-free fast mobile/safari clients
+    # 2. Cookies + Web/TV clients
+    attempts = [
+        {
+            "use_cookie": False,
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["ios", "web_safari", "android_vr", "tv_embedded"],
+                }
+            },
+        },
+    ]
+    if temp_cookie:
+        attempts.append({
+            "use_cookie": True,
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["tv_embedded", "web_safari", "mweb", "web"],
+                }
+            },
+        })
+
     info = None
-    last_error = None
+    ydl_error = None
 
     try:
-        # Engine 1: yt-dlp with EJS + NodeJS + Multi-Client Rotation
-        for strategy in get_strategy_configs(temp_cookie):
+        for attempt in attempts:
             try:
-                ydl_opts = build_ydl_opts(base_opts, strategy, temp_cookie)
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                opts = dict(base_opts)
+                opts["extractor_args"] = attempt["extractor_args"]
+                if attempt["use_cookie"] and temp_cookie:
+                    opts["cookiefile"] = temp_cookie
+                else:
+                    opts.pop("cookiefile", None)
+
+                with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(url, download=True)
                 if info:
                     break
             except Exception as e:
-                last_error = e
+                ydl_error = e
                 for f in os.listdir(DOWNLOAD_DIR):
                     if f.startswith(unique_id) and not f.startswith(f"cookie_{unique_id}"):
                         cleanup_files(os.path.join(DOWNLOAD_DIR, f))
@@ -508,7 +493,7 @@ async def download_media(
                             final_path = candidate
                             break
 
-        # Engine 2: Agar yt-dlp fail hua, toh pytubefix + ffmpeg backup engine chalao
+        # Backup Engine: pytubefix (Fixed .resolution support + instant progressive MP4)
         if not final_path or not os.path.exists(final_path):
             try:
                 final_path, fallback_title = download_with_pytubefix(
@@ -524,7 +509,7 @@ async def download_media(
             except Exception as backup_err:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Download failed: {str(last_error or backup_err)}",
+                    detail=f"Download failed: {str(ydl_error)} | Backup: {str(backup_err)}",
                 )
 
         actual_ext = os.path.splitext(final_path)[1] or f".{format_type}"
