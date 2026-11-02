@@ -29,7 +29,8 @@ def get_base_ydl_opts():
     opts = {
         "quiet": True,
         "no_warnings": True,
-        "extractor_args": {"youtube": {"player_client": ["ios", "android", "mweb", "web"]}}
+        # YAHAN FIX HAI: Sirf Mobile Apps (android/ios) use karenge taaki bot block bypass ho jaye
+        "extractor_args": {"youtube": {"player_client": ["android", "ios"]}}
     }
     if os.path.exists(COOKIE_FILE):
         opts["cookiefile"] = COOKIE_FILE
@@ -124,7 +125,6 @@ async def download_media(
             "preferredquality": quality if quality.isdigit() else "320",
         }]
     else:
-        # Robust format fallback to prevent "Requested format is not available" error
         if quality == "best":
             ydl_opts["format"] = "bestvideo+bestaudio/best"
         else:
