@@ -22,6 +22,20 @@ app.add_middleware(
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+# Cookie file check
+COOKIE_FILE = "cookies.txt"
+
+
+def get_base_ydl_opts():
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "extractor_args": {"youtube": {"player_client": ["ios", "android", "mweb", "web"]}}
+    }
+    if os.path.exists(COOKIE_FILE):
+        opts["cookiefile"] = COOKIE_FILE
+    return opts
+
 
 def parse_time_to_seconds(time_str: Optional[str]) -> Optional[float]:
     if not time_str or not time_str.strip():
@@ -60,12 +74,9 @@ async def serve_ui():
 @app.post("/api/info")
 async def get_media_info(url: str = Form(...)):
     try:
-        ydl_opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "skip_download": True,
-            "extractor_args": {"youtube": {"player_client": ["ios", "android", "mweb", "web"]}}
-        }
+        ydl_opts = get_base_ydl_opts()
+        ydl_opts["skip_download"] = True
+        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             formats = info.get("formats", [])
@@ -102,13 +113,9 @@ async def download_media(
     out_template = os.path.join(DOWNLOAD_DIR, f"{unique_id}_%(title).40s.%(ext)s")
     is_muted = mute_video.lower() == "true"
 
-    ydl_opts = {
-        "outtmpl": out_template,
-        "quiet": True,
-        "no_warnings": True,
-        "nopart": True,
-        "extractor_args": {"youtube": {"player_client": ["ios", "android", "mweb", "web"]}},
-    }
+    ydl_opts = get_base_ydl_opts()
+    ydl_opts["outtmpl"] = out_template
+    ydl_opts["nopart"] = True
 
     if mode == "audio":
         ydl_opts["format"] = "bestaudio/best"
