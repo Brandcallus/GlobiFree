@@ -1,11 +1,16 @@
 FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y ffmpeg nodejs curl ca-certificates && rm -rf /var/lib/apt/lists/*
+# Install ffmpeg, nodejs, curl, unzip and deno (required by yt-dlp EJS)
+RUN apt-get update && apt-get install -y ffmpeg nodejs curl unzip ca-certificates && \
+    curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -U pip && pip install --no-cache-dir -U --pre -r requirements.txt
+RUN pip install --no-cache-dir -U pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir -U --pre "yt-dlp[default]"
 
 COPY . .
 
