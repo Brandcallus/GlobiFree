@@ -55,16 +55,20 @@ def get_yt_dlp_base_opts():
         "no_warnings": True,
         "nocheckcertificate": True,
         "geo_bypass": True,
+        "impersonate": "chrome110",  # Bypasses 403 Forbidden by mimicking a real Google Chrome browser
         "js_runtimes": {"deno": {}, "node": {}},
     }
 
 
 def extract_info_with_fallback(url: str):
+    # yt-dlp strategies
     client_strategies = [
-        None,  # Default yt-dlp with Deno/Node EJS
-        {"youtube": {"player_client": ["ios", "android_vr", "web"]}},
+        {"youtube": {"player_client": ["android", "web"]}},
+        {"youtube": {"player_client": ["ios", "android_vr"]}},
         {"youtube": {"player_client": ["tv", "mweb"]}},
+        None
     ]
+    
     last_err = None
     for ext_args in client_strategies:
         opts = get_yt_dlp_base_opts()
@@ -76,20 +80,22 @@ def extract_info_with_fallback(url: str):
         except Exception as e:
             last_err = e
 
-    # Fallback to pytubefix for YouTube URLs
+    # Fallback to pytubefix for YouTube URLs testing multiple mobile/TV clients
     if "youtube.com" in url or "youtu.be" in url:
-        try:
-            from pytubefix import YouTube
-            yt = YouTube(url)
-            return {
-                "title": yt.title,
-                "uploader": yt.author,
-                "duration": yt.length,
-                "thumbnail": yt.thumbnail_url,
-                "extractor": "youtube",
-            }
-        except Exception as e:
-            last_err = e
+        from pytubefix import YouTube
+        # Mobile and VR clients generally bypass 403 better than standard WEB
+        for client in ["ANDROID_VR", "TV", "IOS", "ANDROID", "WEB"]:
+            try:
+                yt = YouTube(url, client=client)
+                return {
+                    "title": yt.title,
+                    "uploader": yt.author,
+                    "duration": yt.length,
+                    "thumbnail": yt.thumbnail_url,
+                    "extractor": "youtube",
+                }
+            except Exception as e:
+                last_err = e
 
     raise HTTPException(status_code=400, detail=f"Failed to fetch info: {str(last_err)}")
 
@@ -138,7 +144,20 @@ def download_with_pytubefix(
 ) -> Path:
     from pytubefix import YouTube
 
-    yt = YouTube(url)
+    # Try multiple clients for 403 bypass
+    yt = None
+    last_e = None
+    for client in ["ANDROID_VR", "TV", "IOS", "ANDROID"]:
+        try:
+            yt = YouTube(url, client=client)
+            _ = yt.title  # Trigger fetch to ensure it works
+            break
+        except Exception as e:
+            last_e = e
+    
+    if not yt:
+        raise Exception(f"pytubefix all clients failed: {str(last_e)}")
+
     out_file = job_dir / f"output.{format_type}"
 
     if mode == "audio":
@@ -204,9 +223,10 @@ async def api_download(
     output_template = str(job_dir / f"media.%(ext)s")
 
     client_strategies = [
-        None,
-        {"youtube": {"player_client": ["ios", "android_vr", "web"]}},
+        {"youtube": {"player_client": ["android", "web"]}},
+        {"youtube": {"player_client": ["ios", "android_vr"]}},
         {"youtube": {"player_client": ["tv", "mweb"]}},
+        None
     ]
 
     downloaded_file: Optional[Path] = None
