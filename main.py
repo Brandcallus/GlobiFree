@@ -31,8 +31,7 @@ def get_base_ydl_opts():
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        # 🔥 THE MASTER CLIENT COMBO: 
-        # 'android' handles Shorts perfectly, 'web_creator' handles normal videos.
+        # Mobile clients are best for bot-bypass during info fetching
         "extractor_args": {"youtube": {"player_client": ["android", "web_creator", "tv"]}}
     }
     
@@ -81,25 +80,13 @@ async def get_media_info(url: str = Form(...)):
     try:
         ydl_opts = get_base_ydl_opts()
         ydl_opts["skip_download"] = True
+        ydl_opts["format"] = None
         
-        # Super permissive format string
-        ydl_opts["format"] = "bestvideo+bestaudio/best/b/worst"
-        
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-        except Exception as e:
-            # 🛡️ THE SHIELD: Agar kisi wajah se ab bhi format nakhre kare, 
-            # toh yeh block error catch karega aur "all" format se zabardasti details nikal layega.
-            if "Requested format is not available" in str(e):
-                ydl_opts["format"] = "all"
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl_fallback:
-                    info = ydl_fallback.extract_info(url, download=False)
-            else:
-                raise e
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
 
         formats = info.get("formats", [])
-        heights = sorted(list({f.get("height") for f in formats if f.get("height")}), reverse=True)
+        heights = sorted(list({f.get("height") for f in formats if f.get("height") and isinstance(f.get("height"), int)}), reverse=True)
         max_height = heights[0] if heights else None
         platform = "Instagram" if "instagram.com" in url.lower() else "YouTube"
 
@@ -137,7 +124,7 @@ async def download_media(
     ydl_opts["nopart"] = True
 
     if mode == "audio":
-        ydl_opts["format"] = "ba/bestaudio/best/b"
+        ydl_opts["format"] = "bestaudio/best"
         ydl_opts["postprocessors"] = [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": format_type,
@@ -145,9 +132,9 @@ async def download_media(
         }]
     else:
         if quality == "best":
-            ydl_opts["format"] = "bv*+ba/b/best/worst"
+            ydl_opts["format"] = "bestvideo+bestaudio/best"
         else:
-            ydl_opts["format"] = f"bv*[height<={quality}]+ba/b[height<={quality}] / bv*+ba/b / b / best / worst"
+            ydl_opts["format"] = f"bestvideo[height<={quality}]+bestaudio/bestvideo+bestaudio/best"
 
         if is_muted:
             ydl_opts["postprocessors"] = [{
@@ -178,13 +165,15 @@ async def download_media(
             try:
                 info = ydl.extract_info(url, download=True)
             except Exception as de:
-                # 🛡️ THE DOWNLOAD SHIELD: Catch format error during download and force absolute base fallback
-                if "Requested format is not available" in str(de):
-                    ydl_opts["format"] = "b/best/worst"
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl_fallback:
-                        info = ydl_fallback.extract_info(url, download=True)
-                else:
-                    raise de
+                # 🚨 INVINCIBLE DOWNLOAD SHIELD 🚨
+                # Agar video ne quality hide kar li hai aur download fail hota hai, 
+                # toh saare filters hata kar default 'best' mode par switch kar dega.
+                ydl_opts.pop("format", None) 
+                if "extractor_args" in ydl_opts:
+                    del ydl_opts["extractor_args"] 
+                    
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl_fallback:
+                    info = ydl_fallback.extract_info(url, download=True)
                     
             prepared_path = ydl.prepare_filename(info)
             base_path = os.path.splitext(prepared_path)[0]
