@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Globifree — HD Free YouTube/Insta Downloader</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <style>
+    /* Custom Dual Range Slider Styling */
+    .range-slider-input {
+      pointer-events: none;
+      position: absolute;
+      height: 0;
+      width: 100%;
+      outline: none;
+      -webkit-appearance: none;
+    }
+    .range-slider-input::-webkit-slider-thumb {
+      pointer-events: all;
+      width: 22px;
+      height: 28px;
+      border-radius: 6px;
+      background: #ffffff;
+      border: 3px solid #6366f1;
+      cursor: ew-resize;
+      -webkit-appearance: none;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .range-slider-input::-moz-range-thumb {
+      pointer-events: all;
+      width: 22px;
+      height: 28px;
+      border-radius: 6px;
+      background: #ffffff;
+      border: 3px solid #6366f1;
+      cursor: ew-resize;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+  </style>
+</head>
+<body class="bg-slate-100 dark:bg-[#0B0F19] text-slate-900 dark:text-slate-100 min-h-screen flex flex-col justify-between transition-colors duration-300 font-sans">
+
+  <!-- Top Navbar -->
+  <header class="border-b border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md sticky top-0 z-30">
+    <div class="max-w-5xl mx-auto px-4 py-3.5 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center text-white shadow-lg shadow-indigo-500/30">
+          <i class="fa-solid fa-cloud-arrow-down text-lg"></i>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="font-extrabold text-lg tracking-tight">Globifree</h1>
+            <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-400 border border-indigo-500/20">MAX HD</span>
+          </div>
+          <p class="text-xs font-medium text-slate-500 dark:text-slate-400">HD Free YouTube/Insta Downloader</p>
+        </div>
+      </div>
+
+      <button id="themeToggle" class="w-10 h-10 rounded-xl bg-slate-200/70 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 transition flex items-center justify-center" title="Switch Theme">
+        <i id="themeIcon" class="fa-solid fa-sun text-amber-400"></i>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Workspace -->
+  <main class="max-w-4xl w-full mx-auto px-4 py-8 flex-grow">
+    <!-- Hero Heading -->
+    <div class="text-center mb-7">
+      <h2 class="text-3xl sm:text-4xl font-extrabold tracking-tight mb-2.5 bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
+        Original Quality Media Downloader
+      </h2>
+      <p class="text-sm text-slate-600 dark:text-slate-400 max-w-xl mx-auto">
+        Paste a YouTube video, Short, or Instagram Reel link. Choose your exact video or audio format, trim a custom clip if needed, and download with zero watermarks.
+      </p>
+    </div>
+
+    <!-- Main Downloader Card -->
+    <div class="bg-white dark:bg-slate-900/90 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-5 sm:p-7 shadow-2xl shadow-indigo-950/10">
+
+      <!-- Step 1: URL Bar -->
+      <div class="mb-5">
+        <div class="flex items-center justify-between mb-2">
+          <label for="mediaUrl" class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            Paste Video or Reel Link
+          </label>
+          <span id="platformBadge" class="hidden text-xs font-semibold px-2.5 py-0.5 rounded-full"></span>
+        </div>
+
+        <div class="flex flex-col sm:flex-row gap-2.5">
+          <div class="relative flex-grow">
+            <input
+              id="mediaUrl"
+              type="url"
+              placeholder="https://www.youtube.com/watch?v=... or https://www.instagram.com/reel/..."
+              class="w-full pl-10 pr-20 py-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm transition"
+            />
+            <i class="fa-solid fa-link absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"></i>
+            <button id="pasteBtn" type="button" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-semibold px-2.5 py-1 rounded-lg bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition">
+              Paste
+            </button>
+          </div>
+
+          <button
+            id="previewBtn"
+            type="button"
+            class="px-5 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold transition flex items-center justify-center gap-2 shrink-0 shadow-md shadow-indigo-600/20"
+          >
+            <i class="fa-solid fa-wand-magic-sparkles"></i> Fetch Details
+          </button>
+        </div>
+      </div>
+
+      <!-- Media Metadata Preview Card -->
+      <div id="previewCard" class="hidden mb-5 p-4 rounded-xl bg-slate-50 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center gap-4">
+        <img id="previewThumb" src="" alt="Thumbnail" class="w-full sm:w-40 h-24 object-cover rounded-lg border border-slate-300 dark:border-slate-800 shrink-0" />
+        <div class="flex-grow text-center sm:text-left overflow-hidden">
+          <div class="flex flex-wrap items-center justify-center sm:justify-start gap-2 mb-1.5">
+            <span id="previewPlatform" class="text-[11px] font-bold uppercase px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400"></span>
+            <span id="previewRes" class="text-[11px] font-bold uppercase px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400"></span>
+            <span id="previewDuration" class="text-xs font-medium text-slate-500 dark:text-slate-400"></span>
+          </div>
+          <h3 id="previewTitle" class="font-bold text-sm truncate mb-1"></h3>
+          <p id="previewUploader" class="text-xs text-slate-500 dark:text-slate-400"></p>
+        </div>
+      </div>
+
+      <!-- Optional Clip Trimmer Action Bar -->
+      <div class="mb-6 flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+            <i class="fa-solid fa-scissors"></i>
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-bold">Video Clip Trimmer (Optional)</span>
+              <span id="activeTrimBadge" class="hidden text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                Full Video
+              </span>
+            </div>
+            <p class="text-[11px] text-slate-500 dark:text-slate-400">
+              Download the full video by default, or cut a custom 1s – 3m clip.
+            </p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            id="resetTrimMainBtn"
+            class="hidden px-3 py-2 rounded-lg bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 transition"
+          >
+            Reset to Full Video
+          </button>
+          <button
+            type="button"
+            id="openTrimModalBtn"
+            class="px-4 py-2 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-500 dark:text-indigo-400 border border-indigo-500/30 text-xs font-bold transition flex items-center gap-1.5"
+          >
+            <i class="fa-solid fa-sliders"></i> Trim Video Clip
+          </button>
+        </div>
+      </div>
+
+      <!-- ========================================== -->
+      <!-- BAR 1: VIDEO DOWNLOAD BAR (DEFAULT 720p MP4) -->
+      <!-- ========================================== -->
+      <div class="mb-5 p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-bold uppercase tracking-wider text-indigo-500 dark:text-indigo-400 flex items-center gap-1.5">
+            <i class="fa-solid fa-video"></i> Video Download Bar
+          </span>
+
+          <!-- Mute Video Toggle -->
+          <label class="inline-flex items-center gap-2 cursor-pointer select-none">
+            <input id="muteVideoCheckbox" type="checkbox" class="sr-only peer" />
+            <div class="w-8 h-4 bg-slate-300 dark:bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all relative peer-checked:bg-rose-500"></div>
+            <span class="text-xs font-semibold text-slate-600 dark:text-slate-400 flex items-center gap-1">
+              <i class="fa-solid fa-volume-xmark text-rose-400"></i> Mute Video (No Audio)
+            </span>
+          </label>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-stretch">
+          <!-- Column 1: Video Name -->
+          <div class="sm:col-span-4">
+            <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Video File Name</label>
+            <input
+              id="videoFileName"
+              type="text"
+              placeholder="Video Name (Auto-filled)"
+              class="w-full px-3 py-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+
+          <!-- Column 2: Video Type -->
+          <div class="sm:col-span-2">
+            <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Video Type</label>
+            <select
+              id="videoFormatSelect"
+              class="w-full px-3 py-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+            >
+              <option value="mp4" selected>MP4 (Default)</option>
+              <option value="mkv">MKV</option>
+              <option value="webm">WEBM</option>
+              <option value="mov">MOV</option>
+            </select>
+          </div>
+
+          <!-- Column 3: Video Quality (Default 720p) -->
+          <div class="sm:col-span-3">
+            <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Video Quality</label>
+            <select
+              id="videoQualitySelect"
+              class="w-full px-3 py-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+            >
+              <option value="best">Max Available (4K / 8K)</option>
+              <option value="2160">2160p (4K Ultra HD)</option>
+              <option value="1440">1440p (2K QHD)</option>
+              <option value="1080">1080p (Full HD)</option>
+              <option value="720" selected>720p HD (Default)</option>
+              <option value="480">480p (Standard)</option>
+              <option value="360">360p (Medium)</option>
+              <option value="240">240p (Low)</option>
+              <option value="144">144p (Data Saver)</option>
+            </select>
+          </div>
+
+          <!-- Column 4: Download Video Button -->
+          <div class="sm:col-span-3 flex flex-col justify-end">
+            <button
+              id="downloadVideoBtn"
+              type="button"
+              class="w-full py-2.5 px-4 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs shadow-md shadow-indigo-600/20 transition flex items-center justify-center gap-2 h-[38px]"
+            >
+              <i class="fa-solid fa-download"></i>
+              <span>Download Video</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================== -->
+      <!-- BAR 2: DEDICATED AUDIO ONLY DOWNLOAD BAR   -->
+      <!-- ========================================== -->
+      <div class="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-bold uppercase tracking-wider text-pink-500 dark:text-pink-400 flex items-center gap-1.5">
+            <i class="fa-solid fa-music"></i> Audio Only Download Bar
+          </span>
+          <span class="text-[11px] text-slate-400">Extract studio-grade audio track</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-stretch">
+          <!-- Column 1: Audio Name -->
+          <div class="sm:col-span-4">
+            <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Audio File Name</label>
+            <input
+              id="audioFileName"
+              type="text"
+              placeholder="Audio Name (Auto-filled)"
+              class="w-full px-3 py-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-pink-500"
+            />
+          </div>
+
+          <!-- Column 2: Audio Format -->
+          <div class="sm:col-span-2">
+            <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Audio Type</label>
+            <select
+              id="audioFormatSelect"
+              class="w-full px-3 py-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-pink-500 cursor-pointer"
+            >
+              <option value="mp3" selected>MP3</option>
+              <option value="m4a">M4A</option>
+              <option value="wav">WAV</option>
+              <option value="flac">FLAC</option>
+              <option value="opus">OPUS</option>
+            </select>
+          </div>
+
+          <!-- Column 3: Audio Bitrate Quality -->
+          <div class="sm:col-span-3">
+            <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Audio Quality</label>
+            <select
+              id="audioQualitySelect"
+              class="w-full px-3 py-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-pink-500 cursor-pointer"
+            >
+              <option value="320" selected>320 kbps (Best Quality)</option>
+              <option value="256">256 kbps (High)</option>
+              <option value="192">192 kbps (Standard)</option>
+              <option value="128">128 kbps (Compact)</option>
+            </select>
+          </div>
+
+          <!-- Column 4: Download Audio Button -->
+          <div class="sm:col-span-3 flex flex-col justify-end">
+            <button
+              id="downloadAudioBtn"
+              type="button"
+              class="w-full py-2.5 px-4 rounded-lg bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white font-bold text-xs shadow-md shadow-pink-600/20 transition flex items-center justify-center gap-2 h-[38px]"
+            >
+              <i class="fa-solid fa-headphones"></i>
+              <span>Download Audio</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Progress Bar -->
+      <div id="progressSection" class="hidden mt-6">
+        <div class="flex justify-between items-center text-xs font-semibold mb-1.5">
+          <span id="statusText" class="text-indigo-500 dark:text-indigo-400 flex items-center gap-2">
+            <i class="fa-solid fa-circle-notch fa-spin"></i> Processing media stream...
+          </span>
+          <span id="progressPercent" class="text-slate-500">0%</span>
+        </div>
+        <div class="w-full h-2.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+          <div id="progressBar" class="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 w-0 transition-all duration-300"></div>
+        </div>
+      </div>
+
+      <!-- Status Alert -->
+      <div id="alertBox" class="hidden mt-4 p-3.5 rounded-xl text-xs font-semibold"></div>
+    </div>
+  </main>
+
+  <!-- ================================================= -->
+  <!-- POPUP MODAL: INTERACTIVE VIDEO CLIP TRIMMER       -->
+  <!-- ================================================= -->
+  <div id="trimModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+    <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl animate-fadeIn">
+      
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between pb-3 mb-4 border-b border-slate-200 dark:border-slate-800">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-indigo-500/15 text-indigo-400 flex items-center justify-center">
+            <i class="fa-solid fa-scissors"></i>
+          </div>
+          <div>
+            <h3 class="font-bold text-base">Custom Video Clip Trimmer</h3>
+            <p class="text-[11px] text-slate-400">Allowed clip length: Minimum 1–2 sec (Memes) • Maximum 3 minutes</p>
+          </div>
+        </div>
+        <button id="closeTrimModalX" type="button" class="text-slate-400 hover:text-slate-200 text-lg">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <!-- Visual Guide Card with Image -->
+      <div class="mb-5 p-3.5 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-center gap-3.5">
+        <img
+          id="modalPreviewThumb"
+          src="https://images.unsplash.com/photo-1611162616475-46b635cb6868?w=300&auto=format&fit=crop&q=80"
+          alt="Video Preview"
+          class="w-24 h-16 object-cover rounded-lg border border-slate-300 dark:border-slate-700 shrink-0"
+        />
+        <div class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+          <p class="font-bold text-indigo-500 dark:text-indigo-400 mb-0.5">
+            <i class="fa-solid fa-hand-pointer mr-1"></i> Stretch the Bar to Select Your Clip
+          </p>
+          Drag the left and right handles on the timeline bar below to stretch or shrink your clip, or type exact timestamps at the bottom.
+        </div>
+      </div>
+
+      <!-- Interactive Stretchable Range Bar -->
+      <div class="mb-6 px-2">
+        <div class="flex justify-between text-xs font-bold mb-2">
+          <span class="text-indigo-400">Start: <span id="sliderStartLabel">00:00</span></span>
+          <span id="clipLengthBadge" class="px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-[11px]">
+            Clip Length: 30s
+          </span>
+          <span class="text-pink-400">End: <span id="sliderEndLabel">00:30</span></span>
+        </div>
+
+        <!-- Visual Track Container -->
+        <div class="relative h-10 bg-slate-200 dark:bg-slate-800 rounded-xl flex items-center px-1 border border-slate-300 dark:border-slate-700">
+          <!-- Highlighted Selected Clip Fill -->
+          <div id="sliderHighlightBar" class="absolute h-full bg-gradient-to-r from-indigo-500/40 via-purple-500/40 to-pink-500/40 border-x-2 border-indigo-400 rounded-lg pointer-events-none"></div>
+
+          <!-- Dual Range Inputs -->
+          <input id="rangeStart" type="range" min="0" max="240" value="0" step="1" class="range-slider-input" />
+          <input id="rangeEnd" type="range" min="0" max="240" value="30" step="1" class="range-slider-input" />
+        </div>
+
+        <div class="flex justify-between text-[10px] text-slate-400 mt-1.5">
+          <span>00:00</span>
+          <span>Drag handles to stretch clip (Min: 1s • Max: 3m 00s)</span>
+          <span id="maxDurationLabel">04:00</span>
+        </div>
+      </div>
+
+      <!-- Manual Time Input Boxes (Auto-Syncs with Drag Bar) -->
+      <div class="mb-6 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+        <p class="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-2.5">
+          Know the exact timestamps? Type them below (e.g., <code class="text-indigo-400">3:23</code> to <code class="text-indigo-400">5:49</code>) and the bar above will automatically stretch to match:
+        </p>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-[11px] font-bold text-slate-500 mb-1">Start Time (MM:SS)</label>
+            <input
+              id="manualStartInput"
+              type="text"
+              value="00:00"
+              placeholder="e.g. 03:23"
+              class="w-full px-3 py-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <div>
+            <label class="block text-[11px] font-bold text-slate-500 mb-1">End Time (MM:SS)</label>
+            <input
+              id="manualEndInput"
+              type="text"
+              value="00:30"
+              placeholder="e.g. 05:49"
+              class="w-full px-3 py-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+        </div>
+        <p id="modalErrorText" class="hidden text-[11px] text-rose-400 font-semibold mt-2"></p>
+      </div>
+
+      <!-- Modal Footer Actions (Cancel & Done) -->
+      <div class="flex items-center justify-end gap-3">
+        <button
+          id="cancelTrimBtn"
+          type="button"
+          class="px-4 py-2.5 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-xs font-bold transition"
+        >
+          Cancel (Back to Website)
+        </button>
+        <button
+          id="doneTrimBtn"
+          type="button"
+          class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/30 transition flex items-center gap-2"
+        >
+          <i class="fa-solid fa-check"></i> Done & Download Trimmed Clip
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <footer class="text-center py-5 text-xs text-slate-500 border-t border-slate-200/60 dark:border-slate-900">
+    Globifree • HD Free YouTube/Insta Downloader • Zero Watermarks
+  </footer>
+
+  <script>
+    const CUSTOM_BACKEND_URL = "";
+    const API_BASE = CUSTOM_BACKEND_URL || (window.location.origin.includes('http') ? window.location.origin : 'http://127.0.0.1:8000');
+
+    // Elements
+    const mediaUrlInput = document.getElementById('mediaUrl');
+    const pasteBtn = document.getElementById('pasteBtn');
+    const platformBadge = document.getElementById('platformBadge');
+    const previewBtn = document.getElementById('previewBtn');
+    const previewCard = document.getElementById('previewCard');
+    const videoFileName = document.getElementById('videoFileName');
+    const audioFileName = document.getElementById('audioFileName');
+    const videoFormatSelect = document.getElementById('videoFormatSelect');
+    const videoQualitySelect = document.getElementById('videoQualitySelect');
+    const muteVideoCheckbox = document.getElementById('muteVideoCheckbox');
+    const audioFormatSelect = document.getElementById('audioFormatSelect');
+    const audioQualitySelect = document.getElementById('audioQualitySelect');
+    const downloadVideoBtn = document.getElementById('downloadVideoBtn');
+    const downloadAudioBtn = document.getElementById('downloadAudioBtn');
+    const progressSection = document.getElementById('progressSection');
+    const progressBar = document.getElementById('progressBar');
+    const progressPercent = document.getElementById('progressPercent');
+    const statusText = document.getElementById('statusText');
+    const alertBox = document.getElementById('alertBox');
+
+    // Trim Modal Elements
+    const trimModal = document.getElementById('trimModal');
+    const openTrimModalBtn = document.getElementById('openTrimModalBtn');
+    const closeTrimModalX = document.getElementById('closeTrimModalX');
+    const cancelTrimBtn = document.getElementById('cancelTrimBtn');
+    const doneTrimBtn = document.getElementById('doneTrimBtn');
+    const resetTrimMainBtn = document.getElementById('resetTrimMainBtn');
+    const activeTrimBadge = document.getElementById('activeTrimBadge');
+    const rangeStart = document.getElementById('rangeStart');
+    const rangeEnd = document.getElementById('rangeEnd');
+    const sliderHighlightBar = document.getElementById('sliderHighlightBar');
+    const sliderStartLabel = document.getElementById('sliderStartLabel');
+    const sliderEndLabel = document.getElementById('sliderEndLabel');
+    const clipLengthBadge = document.getElementById('clipLengthBadge');
+    const maxDurationLabel = document.getElementById('maxDurationLabel');
+    const manualStartInput = document.getElementById('manualStartInput');
+    const manualEndInput = document.getElementById('manualEndInput');
+    const modalErrorText = document.getElementById('modalErrorText');
+    const modalPreviewThumb = document.getElementById('modalPreviewThumb');
+
+    // State for Trimming (null = Full video download)
+    let isTrimActive = false;
+    let savedStartSeconds = null;
+    let savedEndSeconds = null;
+    let totalMediaDuration = 360; // Default 6 mins until metadata is fetched
+
+    const MIN_CLIP_SEC = 1;
+    const MAX_CLIP_SEC = 180; // 3 minutes max
+
+    // Theme Toggle
+    document.getElementById('themeToggle').addEventListener('click', () => {
+      document.documentElement.classList.toggle('dark');
+      const isDark = document.documentElement.classList.contains('dark');
+      document.getElementById('themeIcon').className = isDark ? 'fa-solid fa-sun text-amber-400' : 'fa-solid fa-moon text-slate-700';
+    });
+
+    // Helper: Format Seconds -> MM:SS or HH:MM:SS
+    function secondsToTime(sec) {
+      sec = Math.max(0, Math.floor(sec));
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = Math.floor(sec % 60);
+      if (h > 0) {
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+      }
+      return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+
+    // Helper: Parse MM:SS or HH:MM:SS -> Seconds
+    function timeToSeconds(str) {
+      if (!str || !str.trim()) return null;
+      const clean = str.trim();
+      const parts = clean.split(':').map(Number);
+      if (parts.some(isNaN)) return null;
+      if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+      if (parts.length === 2) return parts[0] * 60 + parts[1];
+      if (parts.length === 1) return parts[0];
+      return null;
+    }
+
+    // Update Slider Visual Fill & Labels
+    function updateSliderVisuals(syncInputs = true) {
+      const maxVal = Number(rangeEnd.max) || 360;
+      const startVal = Number(rangeStart.value);
+      const endVal = Number(rangeEnd.value);
+
+      const leftPercent = (startVal / maxVal) * 100;
+      const rightPercent = (endVal / maxVal) * 100;
+
+      sliderHighlightBar.style.left = `${leftPercent}%`;
+      sliderHighlightBar.style.width = `${Math.max(1, rightPercent - leftPercent)}%`;
+
+      sliderStartLabel.textContent = secondsToTime(startVal);
+      sliderEndLabel.textContent = secondsToTime(endVal);
+
+      const clipDur = endVal - startVal;
+      clipLengthBadge.textContent = `Clip Length: ${clipDur}s (${secondsToTime(clipDur)})`;
+
+      if (syncInputs) {
+        manualStartInput.value = secondsToTime(startVal);
+        manualEndInput.value = secondsToTime(endVal);
+      }
+      modalErrorText.classList.add('hidden');
+    }
+
+    // Handle Dragging Left Handle
+    rangeStart.addEventListener('input', () => {
+      let s = Number(rangeStart.value);
+      let e = Number(rangeEnd.value);
+
+      if (e - s < MIN_CLIP_SEC) {
+        s = e - MIN_CLIP_SEC;
+        rangeStart.value = s;
+      }
+      if (e - s > MAX_CLIP_SEC) {
+        e = s + MAX_CLIP_SEC;
+        rangeEnd.value = e;
+      }
+      updateSliderVisuals(true);
+    });
+
+    // Handle Dragging Right Handle
+    rangeEnd.addEventListener('input', () => {
+      let s = Number(rangeStart.value);
+      let e = Number(rangeEnd.value);
+
+      if (e - s < MIN_CLIP_SEC) {
+        e = s + MIN_CLIP_SEC;
+        rangeEnd.value = e;
+      }
+      if (e - s > MAX_CLIP_SEC) {
+        s = e - MAX_CLIP_SEC;
+        rangeStart.value = s;
+      }
+      updateSliderVisuals(true);
+    });
+
+    // Handle Typing Timestamps (e.g. 3:23 to 5:49 -> Auto Stretches Drag Bar)
+    function syncFromManualInputs() {
+      const s = timeToSeconds(manualStartInput.value);
+      const e = timeToSeconds(manualEndInput.value);
+
+      if (s === null || e === null) return;
+      if (e <= s) {
+        modalErrorText.textContent = "End time must be greater than Start time.";
+        modalErrorText.classList.remove('hidden');
+        return;
+      }
+
+      const diff = e - s;
+      if (diff < MIN_CLIP_SEC) {
+        modalErrorText.textContent = "Minimum clip length is 1 second.";
+        modalErrorText.classList.remove('hidden');
+        return;
+      }
+      if (diff > MAX_CLIP_SEC) {
+        modalErrorText.textContent = "Maximum clip length is 3 minutes (180 seconds).";
+        modalErrorText.classList.remove('hidden');
+        return;
+      }
+
+      // Expand slider max automatically if user typed a timestamp beyond default duration
+      if (e > Number(rangeEnd.max)) {
+        const newMax = Math.ceil(e + 60);
+        rangeStart.max = newMax;
+        rangeEnd.max = newMax;
+        maxDurationLabel.textContent = secondsToTime(newMax);
+      }
+
+      rangeStart.value = s;
+      rangeEnd.value = e;
+      updateSliderVisuals(false);
+    }
+
+    manualStartInput.addEventListener('input', syncFromManualInputs);
+    manualEndInput.addEventListener('input', syncFromManualInputs);
+
+    // Open Trim Modal
+    openTrimModalBtn.addEventListener('click', () => {
+      rangeStart.max = totalMediaDuration;
+      rangeEnd.max = totalMediaDuration;
+      maxDurationLabel.textContent = secondsToTime(totalMediaDuration);
+
+      if (!isTrimActive) {
+        rangeStart.value = 0;
+        rangeEnd.value = Math.min(30, totalMediaDuration);
+      }
+      updateSliderVisuals(true);
+      trimModal.classList.remove('hidden');
+    });
+
+    // Cancel Button -> Discard Trim & Return to Website
+    function cancelTrimAndClose() {
+      trimModal.classList.add('hidden');
+    }
+    closeTrimModalX.addEventListener('click', cancelTrimAndClose);
+    cancelTrimBtn.addEventListener('click', cancelTrimAndClose);
+
+    // Reset to Full Video
+    resetTrimMainBtn.addEventListener('click', () => {
+      isTrimActive = false;
+      savedStartSeconds = null;
+      savedEndSeconds = null;
+      activeTrimBadge.classList.add('hidden');
+      resetTrimMainBtn.classList.add('hidden');
+      showAlert('Reset complete. Full video will be downloaded.', false);
+    });
+
+    // Done Button in Modal -> Save Trim Range, Close Modal, and Trigger Download
+    doneTrimBtn.addEventListener('click', () => {
+      const s = Number(rangeStart.value);
+      const e = Number(rangeEnd.value);
+      if (e - s < MIN_CLIP_SEC || e - s > MAX_CLIP_SEC) {
+        modalErrorText.textContent = "Clip length must be between 1 second and 3 minutes.";
+        modalErrorText.classList.remove('hidden');
+        return;
+      }
+
+      isTrimActive = true;
+      savedStartSeconds = s;
+      savedEndSeconds = e;
+
+      activeTrimBadge.textContent = `Trimmed: ${secondsToTime(s)} - ${secondsToTime(e)}`;
+      activeTrimBadge.classList.remove('hidden');
+      resetTrimMainBtn.classList.remove('hidden');
+      trimModal.classList.add('hidden');
+
+      if (mediaUrlInput.value.trim()) {
+        triggerDownload('video');
+      } else {
+        showAlert(`Clip range (${secondsToTime(s)} to ${secondsToTime(e)}) saved! Paste a link and click Download.`, false);
+      }
+    });
+
+    // Platform Auto-Detection
+    function detectPlatform(val) {
+      const lower = val.toLowerCase();
+      if (lower.includes('youtube.com') || lower.includes('youtu.be')) {
+        platformBadge.className = 'text-xs font-semibold px-2.5 py-0.5 rounded-full bg-red-500/15 text-red-500 flex items-center gap-1.5';
+        platformBadge.innerHTML = '<i class="fa-brands fa-youtube"></i> YouTube Detected';
+      } else if (lower.includes('instagram.com')) {
+        platformBadge.className = 'text-xs font-semibold px-2.5 py-0.5 rounded-full bg-pink-500/15 text-pink-500 flex items-center gap-1.5';
+        platformBadge.innerHTML = '<i class="fa-brands fa-instagram"></i> Instagram Reel Detected';
+      } else {
+        platformBadge.className = 'hidden';
+      }
+    }
+
+    mediaUrlInput.addEventListener('input', (e) => detectPlatform(e.target.value));
+
+    pasteBtn.addEventListener('click', async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        mediaUrlInput.value = text;
+        detectPlatform(text);
+      } catch {
+        mediaUrlInput.focus();
+      }
+    });
+
+    function showAlert(msg, isError = true) {
+      alertBox.classList.remove('hidden');
+      alertBox.className = `mt-4 p-3.5 rounded-xl text-xs font-semibold border ${
+        isError ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+      }`;
+      alertBox.innerHTML = msg;
+    }
+
+    // Fetch Metadata Preview
+    previewBtn.addEventListener('click', async () => {
+      const url = mediaUrlInput.value.trim();
+      if (!url) return showAlert('Please paste a valid YouTube or Instagram link first.');
+
+      alertBox.classList.add('hidden');
+      previewBtn.disabled = true;
+      previewBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Loading...';
+
+      try {
+        const formData = new FormData();
+        formData.append('url', url);
+
+        const res = await fetch(`${API_BASE}/api/info`, { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Could not fetch media details.');
+
+        const thumbUrl = data.thumbnail || 'https://placehold.co/320x180?text=HD+Preview';
+        document.getElementById('previewThumb').src = thumbUrl;
+        modalPreviewThumb.src = thumbUrl;
+        document.getElementById('previewPlatform').textContent = data.platform;
+        document.getElementById('previewRes').textContent = `Max: ${data.max_resolution}`;
+        document.getElementById('previewDuration').textContent = data.duration ? `• ${secondsToTime(data.duration)}` : '';
+        document.getElementById('previewTitle').textContent = data.title;
+        document.getElementById('previewUploader').textContent = data.uploader;
+
+        // Auto-populate Video & Audio Name bars
+        videoFileName.value = data.title;
+        audioFileName.value = data.title;
+
+        if (data.duration && data.duration > 0) {
+          totalMediaDuration = Math.floor(data.duration);
+        }
+
+        previewCard.classList.remove('hidden');
+      } catch (err) {
+        showAlert(err.message, true);
+      } finally {
+        previewBtn.disabled = false;
+        previewBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Fetch Details';
+      }
+    });
+
+    // Core Download Handler (Supports both Video Bar & Audio Bar)
+    async function triggerDownload(mode) {
+      const url = mediaUrlInput.value.trim();
+      if (!url) return showAlert('Please paste a YouTube or Instagram URL first.');
+
+      const isVideo = mode === 'video';
+      const formatType = isVideo ? videoFormatSelect.value : audioFormatSelect.value;
+      const quality = isVideo ? videoQualitySelect.value : audioQualitySelect.value;
+      const customTitle = isVideo ? videoFileName.value.trim() : audioFileName.value.trim();
+      const muteVideo = isVideo && muteVideoCheckbox.checked ? 'true' : 'false';
+
+      alertBox.classList.add('hidden');
+      downloadVideoBtn.disabled = true;
+      downloadAudioBtn.disabled = true;
+      progressSection.classList.remove('hidden');
+
+      let progress = 12;
+      progressBar.style.width = `${progress}%`;
+      progressPercent.textContent = `${progress}%`;
+      statusText.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> Preparing ${isVideo ? quality + 'p ' + formatType.toUpperCase() : formatType.toUpperCase() + ' Audio'}...`;
+
+      const timer = setInterval(() => {
+        if (progress < 90) {
+          progress += Math.floor(Math.random() * 6) + 2;
+          if (progress > 90) progress = 90;
+          progressBar.style.width = `${progress}%`;
+          progressPercent.textContent = `${progress}%`;
+        }
+      }, 600);
+
+      try {
+        const formData = new FormData();
+        formData.append('url', url);
+        formData.append('mode', mode);
+        formData.append('format_type', formatType);
+        formData.append('quality', quality);
+        formData.append('mute_video', muteVideo);
+        if (customTitle) formData.append('custom_title', customTitle);
+
+        if (isTrimActive && savedStartSeconds !== null && savedEndSeconds !== null) {
+          formData.append('start_time', secondsToTime(savedStartSeconds));
+          formData.append('end_time', secondsToTime(savedEndSeconds));
+        }
+
+        const response = await fetch(`${API_BASE}/api/download`, {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.detail || 'Download failed on server.');
+        }
+
+        clearInterval(timer);
+        progressBar.style.width = '100%';
+        progressPercent.textContent = '100%';
+        statusText.innerHTML = '<i class="fa-solid fa-check text-emerald-400"></i> Complete! Saving file to your device...';
+
+        const disposition = response.headers.get('Content-Disposition');
+        let filename = `${customTitle || 'Globifree_Media'}.${formatType}`;
+        if (disposition && disposition.includes('filename=')) {
+          const match = disposition.match(/filename="?([^"]+)"?/);
+          if (match && match[1]) filename = match[1];
+        }
+
+        const blob = await response.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(downloadUrl);
+
+        showAlert('Download finished! File saved to your device.', false);
+      } catch (err) {
+        clearInterval(timer);
+        progressSection.classList.add('hidden');
+        showAlert(err.message, true);
+      } finally {
+        downloadVideoBtn.disabled = false;
+        downloadAudioBtn.disabled = false;
+      }
+    }
+
+    downloadVideoBtn.addEventListener('click', () => triggerDownload('video'));
+    downloadAudioBtn.addEventListener('click', () => triggerDownload('audio'));
+  </script>
+</body>
+</html>
