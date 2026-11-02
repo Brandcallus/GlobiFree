@@ -30,7 +30,7 @@ def get_base_ydl_opts():
     opts = {
         "quiet": True,
         "no_warnings": True,
-        # 🔥 THE REAL FIX: Removed buggy android/ios. 'tv' and 'web_creator' give standard formats & bypass bots.
+        # 'tv' and 'web_creator' clients to bypass bot blocks safely
         "extractor_args": {"youtube": {"player_client": ["tv", "web_creator"]}}
     }
     
@@ -80,8 +80,10 @@ async def get_media_info(url: str = Form(...)):
         ydl_opts = get_base_ydl_opts()
         ydl_opts["skip_download"] = True
         
-        # 🔥 Industry standard yt-dlp robust format syntax
-        ydl_opts["format"] = "bv*+ba/b"
+        # 🔥 THE MAGIC FIX: format = None
+        # Isse yt-dlp "Fetch Details" ke time format check hi nahi karega, 
+        # isliye "Requested format is not available" wala error yahan aana IMPOSSIBLE hai.
+        ydl_opts["format"] = None 
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -124,7 +126,7 @@ async def download_media(
     ydl_opts["nopart"] = True
 
     if mode == "audio":
-        ydl_opts["format"] = "ba/b"
+        ydl_opts["format"] = "ba/bestaudio/best"
         ydl_opts["postprocessors"] = [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": format_type,
@@ -132,9 +134,10 @@ async def download_media(
         }]
     else:
         if quality == "best":
-            ydl_opts["format"] = "bv*+ba/b"
+            ydl_opts["format"] = "bv*+ba/b/bestvideo+bestaudio/best"
         else:
-            ydl_opts["format"] = f"bv*[height<={quality}]+ba/b[height<={quality}] / bv*+ba/b"
+            # Massive Fallback Chain for Downloads
+            ydl_opts["format"] = f"bv*[height<={quality}]+ba/b[height<={quality}] / bv*+ba/b / bestvideo+bestaudio/best"
 
         if is_muted:
             ydl_opts["postprocessors"] = [{
@@ -162,12 +165,12 @@ async def download_media(
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # 🔥 ULTRA FALLBACK: If standard quality format fails, catch it and force best universal format.
             try:
                 info = ydl.extract_info(url, download=True)
             except yt_dlp.utils.DownloadError as de:
+                # 🛡️ THE ULTIMATE SAFETY NET: If normal download fails, force "b" (absolute best single file)
                 if "Requested format is not available" in str(de):
-                    ydl_opts["format"] = "bv*+ba/b"
+                    ydl_opts["format"] = "b/best"
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl2:
                         info = ydl2.extract_info(url, download=True)
                 else:
