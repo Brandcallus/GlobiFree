@@ -31,12 +31,15 @@ def get_base_ydl_opts():
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        # Mobile clients are best for bot-bypass during info fetching
-        "extractor_args": {"youtube": {"player_client": ["android", "web_creator", "tv"]}}
     }
     
+    # 🔥 THE FIX: Agar cookies hain, toh PC (web) ki tarah behave karo.
+    # Mobile spoofing aur PC cookies mix hone se YouTube format error deta hai.
     if os.path.exists(COOKIE_FILE):
         opts["cookiefile"] = COOKIE_FILE
+        opts["extractor_args"] = {"youtube": {"player_client": ["web"]}}
+    else:
+        opts["extractor_args"] = {"youtube": {"player_client": ["tv", "web_creator"]}}
         
     return opts
 
@@ -77,30 +80,57 @@ async def serve_ui():
 
 @app.post("/api/info")
 async def get_media_info(url: str = Form(...)):
+    info = None
+    error_msg = ""
+    
+    # 🛡️ THE 3-LAYER UNBREAKABLE FETCH SHIELD 🛡️
+    # Layer 1: Normal PC Web Fetch
     try:
         ydl_opts = get_base_ydl_opts()
         ydl_opts["skip_download"] = True
-        ydl_opts["format"] = None
-        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
+    except Exception as e1:
+        error_msg = str(e1)
+        # Layer 2: TV Client Fetch (Fallback)
+        try:
+            ydl_opts2 = get_base_ydl_opts()
+            ydl_opts2["skip_download"] = True
+            ydl_opts2["extractor_args"] = {"youtube": {"player_client": ["tv"]}}
+            with yt_dlp.YoutubeDL(ydl_opts2) as ydl2:
+                info = ydl2.extract_info(url, download=False)
+        except Exception as e2:
+            # Layer 3: Brute Force Details (Ignores format check completely)
+            try:
+                ydl_opts3 = get_base_ydl_opts()
+                ydl_opts3["extract_flat"] = True # Only grabs title/thumbnail
+                with yt_dlp.YoutubeDL(ydl_opts3) as ydl3:
+                    info = ydl3.extract_info(url, download=False)
+            except Exception as e3:
+                raise HTTPException(status_code=400, detail=f"Could not fetch details. Error: {error_msg}")
 
-        formats = info.get("formats", [])
-        heights = sorted(list({f.get("height") for f in formats if f.get("height") and isinstance(f.get("height"), int)}), reverse=True)
-        max_height = heights[0] if heights else None
-        platform = "Instagram" if "instagram.com" in url.lower() else "YouTube"
+    if not info:
+        raise HTTPException(status_code=400, detail="Failed to extract info.")
+        
+    formats = info.get("formats", [])
+    heights = sorted(list({f.get("height") for f in formats if f.get("height") and isinstance(f.get("height"), int)}), reverse=True)
+    
+    # Agar format hide kiya gaya hai (Music videos me), toh default qualities daal do
+    if not heights:
+        heights = [1080, 720, 480, 360]
+        
+    max_height = heights[0] if heights else None
+    platform = "Instagram" if "instagram.com" in url.lower() else "YouTube"
 
-        return {
-            "title": info.get("title", "Media_Video"),
-            "thumbnail": info.get("thumbnail"),
-            "duration": info.get("duration") or 240,
-            "uploader": info.get("uploader", "Creator"),
-            "platform": platform,
-            "max_resolution": f"{max_height}p HD" if max_height else "Original HD",
-            "available_heights": heights,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not fetch media details: {str(e)}")
+    return {
+        "title": info.get("title", "Media_Video"),
+        "thumbnail": info.get("thumbnail"),
+        "duration": info.get("duration") or 240,
+        "uploader": info.get("uploader", "Creator"),
+        "platform": platform,
+        "max_resolution": f"{max_height}p HD" if max_height else "Original HD",
+        "available_heights": heights,
+    }
 
 
 @app.post("/api/download")
@@ -165,10 +195,8 @@ async def download_media(
             try:
                 info = ydl.extract_info(url, download=True)
             except Exception as de:
-                # 🚨 INVINCIBLE DOWNLOAD SHIELD 🚨
-                # Agar video ne quality hide kar li hai aur download fail hota hai, 
-                # toh saare filters hata kar default 'best' mode par switch kar dega.
-                ydl_opts.pop("format", None) 
+                # 🛡️ THE DOWNLOAD SHIELD
+                ydl_opts["format"] = "b/best" 
                 if "extractor_args" in ydl_opts:
                     del ydl_opts["extractor_args"] 
                     
