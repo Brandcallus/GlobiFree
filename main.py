@@ -31,14 +31,12 @@ def get_base_ydl_opts():
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
+        # Sabse stable clients ka combination
+        "extractor_args": {"youtube": {"player_client": ["android", "tv", "web_creator"]}}
     }
     
-    # Agar PC ki cookies hain, toh PC (web) ban kar hi request bhejo
     if os.path.exists(COOKIE_FILE):
         opts["cookiefile"] = COOKIE_FILE
-        opts["extractor_args"] = {"youtube": {"player_client": ["web"]}}
-    else:
-        opts["extractor_args"] = {"youtube": {"player_client": ["tv", "web_creator"]}}
         
     return opts
 
@@ -82,29 +80,38 @@ async def get_media_info(url: str = Form(...)):
     try:
         ydl_opts = get_base_ydl_opts()
         ydl_opts["skip_download"] = True
+        ydl_opts["format"] = None
         
-        # 🔥 THE MAGIC FIX IS BACK: Isse Fetch Details me format error aa hi nahi sakta
-        ydl_opts["format"] = None 
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            
-        formats = info.get("formats", [])
+        info = None
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+        except Exception:
+            # 🔥 THE ULTIMATE HAMMER: Agar normal fetch fail ho, toh bina format check kiye title/thumbnail laao.
+            ydl_opts["extract_flat"] = True
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl_flat:
+                info = ydl_flat.extract_info(url, download=False)
+
+        formats = info.get("formats", []) if info else []
         heights = sorted(list({f.get("height") for f in formats if f.get("height") and isinstance(f.get("height"), int)}), reverse=True)
         
         if not heights:
             heights = [1080, 720, 480, 360]
             
-        max_height = heights[0] if heights else None
+        max_height = heights[0] if heights else 1080
         platform = "Instagram" if "instagram.com" in url.lower() else "YouTube"
 
+        thumb = info.get("thumbnail")
+        if not thumb and info.get("thumbnails"):
+            thumb = info.get("thumbnails")[-1].get("url")
+
         return {
-            "title": info.get("title", "Media_Video"),
-            "thumbnail": info.get("thumbnail"),
-            "duration": info.get("duration") or 240,
-            "uploader": info.get("uploader", "Creator"),
+            "title": info.get("title", "Media_Video") if info else "YouTube_Video",
+            "thumbnail": thumb,
+            "duration": info.get("duration") or 240 if info else 240,
+            "uploader": info.get("uploader", "Creator") if info else "YouTube_Creator",
             "platform": platform,
-            "max_resolution": f"{max_height}p HD" if max_height else "Original HD",
+            "max_resolution": f"{max_height}p HD",
             "available_heights": heights,
         }
     except Exception as e:
@@ -164,11 +171,12 @@ async def download_media(
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
                 info = ydl.extract_info(url, download=True)
-            except Exception as de:
-                # 🚨 THE DOWNLOAD SHIELD
-                ydl_opts.pop("format", None) 
+            except Exception:
+                # 🚨 INVINCIBLE DOWNLOAD SHIELD
+                ydl_opts.pop("format", None)
+                ydl_opts["format"] = "b/best" # Zabardasti ek best format mangega
                 if "extractor_args" in ydl_opts:
-                    del ydl_opts["extractor_args"] 
+                    del ydl_opts["extractor_args"]
                     
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl_fallback:
                     info = ydl_fallback.extract_info(url, download=True)
