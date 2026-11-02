@@ -22,7 +22,6 @@ app.add_middleware(
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# Cookie file check
 COOKIE_FILE = "cookies.txt"
 
 
@@ -125,26 +124,19 @@ async def download_media(
             "preferredquality": quality if quality.isdigit() else "320",
         }]
     else:
-        height_filter = "" if quality == "best" else f"[height<={quality}]"
+        # Robust format fallback to prevent "Requested format is not available" error
+        if quality == "best":
+            ydl_opts["format"] = "bestvideo+bestaudio/best"
+        else:
+            ydl_opts["format"] = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/bestvideo+bestaudio/best"
 
         if is_muted:
-            if format_type == "mp4":
-                ydl_opts["format"] = f"bestvideo{height_filter}[ext=mp4]/bestvideo{height_filter}/best{height_filter}"
-            else:
-                ydl_opts["format"] = f"bestvideo{height_filter}/best{height_filter}"
             ydl_opts["postprocessors"] = [{
                 "key": "FFmpegVideoConvertor",
                 "preferedformat": format_type,
             }]
             ydl_opts["postprocessor_args"] = ["-an"]
         else:
-            if format_type == "mp4":
-                ydl_opts["format"] = (
-                    f"bestvideo{height_filter}[ext=mp4]+bestaudio[ext=m4a]/"
-                    f"bestvideo{height_filter}+bestaudio/best{height_filter}/best"
-                )
-            else:
-                ydl_opts["format"] = f"bestvideo{height_filter}+bestaudio/best{height_filter}/best"
             ydl_opts["merge_output_format"] = format_type
 
     start_sec = parse_time_to_seconds(start_time)
