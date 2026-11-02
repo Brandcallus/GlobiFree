@@ -30,8 +30,10 @@ def get_base_ydl_opts():
     opts = {
         "quiet": True,
         "no_warnings": True,
-        # 'tv' and 'web_creator' clients to bypass bot blocks safely
-        "extractor_args": {"youtube": {"player_client": ["tv", "web_creator"]}}
+        "noplaylist": True,
+        # 🔥 THE MASTER CLIENT COMBO: 
+        # 'android' handles Shorts perfectly, 'web_creator' handles normal videos.
+        "extractor_args": {"youtube": {"player_client": ["android", "web_creator", "tv"]}}
     }
     
     if os.path.exists(COOKIE_FILE):
@@ -80,27 +82,36 @@ async def get_media_info(url: str = Form(...)):
         ydl_opts = get_base_ydl_opts()
         ydl_opts["skip_download"] = True
         
-        # 🔥 THE MAGIC FIX: format = None
-        # Isse yt-dlp "Fetch Details" ke time format check hi nahi karega, 
-        # isliye "Requested format is not available" wala error yahan aana IMPOSSIBLE hai.
-        ydl_opts["format"] = None 
+        # Super permissive format string
+        ydl_opts["format"] = "bestvideo+bestaudio/best/b/worst"
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            formats = info.get("formats", [])
-            heights = sorted(list({f.get("height") for f in formats if f.get("height")}), reverse=True)
-            max_height = heights[0] if heights else None
-            platform = "Instagram" if "instagram.com" in url.lower() else "YouTube"
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+        except Exception as e:
+            # 🛡️ THE SHIELD: Agar kisi wajah se ab bhi format nakhre kare, 
+            # toh yeh block error catch karega aur "all" format se zabardasti details nikal layega.
+            if "Requested format is not available" in str(e):
+                ydl_opts["format"] = "all"
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl_fallback:
+                    info = ydl_fallback.extract_info(url, download=False)
+            else:
+                raise e
 
-            return {
-                "title": info.get("title", "Media_Video"),
-                "thumbnail": info.get("thumbnail"),
-                "duration": info.get("duration") or 240,
-                "uploader": info.get("uploader", "Creator"),
-                "platform": platform,
-                "max_resolution": f"{max_height}p HD" if max_height else "Original HD",
-                "available_heights": heights,
-            }
+        formats = info.get("formats", [])
+        heights = sorted(list({f.get("height") for f in formats if f.get("height")}), reverse=True)
+        max_height = heights[0] if heights else None
+        platform = "Instagram" if "instagram.com" in url.lower() else "YouTube"
+
+        return {
+            "title": info.get("title", "Media_Video"),
+            "thumbnail": info.get("thumbnail"),
+            "duration": info.get("duration") or 240,
+            "uploader": info.get("uploader", "Creator"),
+            "platform": platform,
+            "max_resolution": f"{max_height}p HD" if max_height else "Original HD",
+            "available_heights": heights,
+        }
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not fetch media details: {str(e)}")
 
@@ -126,7 +137,7 @@ async def download_media(
     ydl_opts["nopart"] = True
 
     if mode == "audio":
-        ydl_opts["format"] = "ba/bestaudio/best"
+        ydl_opts["format"] = "ba/bestaudio/best/b"
         ydl_opts["postprocessors"] = [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": format_type,
@@ -134,10 +145,9 @@ async def download_media(
         }]
     else:
         if quality == "best":
-            ydl_opts["format"] = "bv*+ba/b/bestvideo+bestaudio/best"
+            ydl_opts["format"] = "bv*+ba/b/best/worst"
         else:
-            # Massive Fallback Chain for Downloads
-            ydl_opts["format"] = f"bv*[height<={quality}]+ba/b[height<={quality}] / bv*+ba/b / bestvideo+bestaudio/best"
+            ydl_opts["format"] = f"bv*[height<={quality}]+ba/b[height<={quality}] / bv*+ba/b / b / best / worst"
 
         if is_muted:
             ydl_opts["postprocessors"] = [{
@@ -167,12 +177,12 @@ async def download_media(
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
                 info = ydl.extract_info(url, download=True)
-            except yt_dlp.utils.DownloadError as de:
-                # 🛡️ THE ULTIMATE SAFETY NET: If normal download fails, force "b" (absolute best single file)
+            except Exception as de:
+                # 🛡️ THE DOWNLOAD SHIELD: Catch format error during download and force absolute base fallback
                 if "Requested format is not available" in str(de):
-                    ydl_opts["format"] = "b/best"
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl2:
-                        info = ydl2.extract_info(url, download=True)
+                    ydl_opts["format"] = "b/best/worst"
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl_fallback:
+                        info = ydl_fallback.extract_info(url, download=True)
                 else:
                     raise de
                     
