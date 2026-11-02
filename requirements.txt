@@ -1,7 +1,6 @@
 fastapi
 uvicorn
 python-multipart
-curl_cffi
-yt-dlp-ejs
+yt-dlp[default]
+curl-cffi
 pytubefix
-yt-dlp[default] @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz
