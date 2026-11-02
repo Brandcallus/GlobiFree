@@ -33,8 +33,7 @@ def get_base_ydl_opts():
         "noplaylist": True,
     }
     
-    # 🔥 THE FIX: Agar cookies hain, toh PC (web) ki tarah behave karo.
-    # Mobile spoofing aur PC cookies mix hone se YouTube format error deta hai.
+    # Agar PC ki cookies hain, toh PC (web) ban kar hi request bhejo
     if os.path.exists(COOKIE_FILE):
         opts["cookiefile"] = COOKIE_FILE
         opts["extractor_args"] = {"youtube": {"player_client": ["web"]}}
@@ -80,57 +79,36 @@ async def serve_ui():
 
 @app.post("/api/info")
 async def get_media_info(url: str = Form(...)):
-    info = None
-    error_msg = ""
-    
-    # 🛡️ THE 3-LAYER UNBREAKABLE FETCH SHIELD 🛡️
-    # Layer 1: Normal PC Web Fetch
     try:
         ydl_opts = get_base_ydl_opts()
         ydl_opts["skip_download"] = True
+        
+        # 🔥 THE MAGIC FIX IS BACK: Isse Fetch Details me format error aa hi nahi sakta
+        ydl_opts["format"] = None 
+        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-    except Exception as e1:
-        error_msg = str(e1)
-        # Layer 2: TV Client Fetch (Fallback)
-        try:
-            ydl_opts2 = get_base_ydl_opts()
-            ydl_opts2["skip_download"] = True
-            ydl_opts2["extractor_args"] = {"youtube": {"player_client": ["tv"]}}
-            with yt_dlp.YoutubeDL(ydl_opts2) as ydl2:
-                info = ydl2.extract_info(url, download=False)
-        except Exception as e2:
-            # Layer 3: Brute Force Details (Ignores format check completely)
-            try:
-                ydl_opts3 = get_base_ydl_opts()
-                ydl_opts3["extract_flat"] = True # Only grabs title/thumbnail
-                with yt_dlp.YoutubeDL(ydl_opts3) as ydl3:
-                    info = ydl3.extract_info(url, download=False)
-            except Exception as e3:
-                raise HTTPException(status_code=400, detail=f"Could not fetch details. Error: {error_msg}")
-
-    if not info:
-        raise HTTPException(status_code=400, detail="Failed to extract info.")
+            
+        formats = info.get("formats", [])
+        heights = sorted(list({f.get("height") for f in formats if f.get("height") and isinstance(f.get("height"), int)}), reverse=True)
         
-    formats = info.get("formats", [])
-    heights = sorted(list({f.get("height") for f in formats if f.get("height") and isinstance(f.get("height"), int)}), reverse=True)
-    
-    # Agar format hide kiya gaya hai (Music videos me), toh default qualities daal do
-    if not heights:
-        heights = [1080, 720, 480, 360]
-        
-    max_height = heights[0] if heights else None
-    platform = "Instagram" if "instagram.com" in url.lower() else "YouTube"
+        if not heights:
+            heights = [1080, 720, 480, 360]
+            
+        max_height = heights[0] if heights else None
+        platform = "Instagram" if "instagram.com" in url.lower() else "YouTube"
 
-    return {
-        "title": info.get("title", "Media_Video"),
-        "thumbnail": info.get("thumbnail"),
-        "duration": info.get("duration") or 240,
-        "uploader": info.get("uploader", "Creator"),
-        "platform": platform,
-        "max_resolution": f"{max_height}p HD" if max_height else "Original HD",
-        "available_heights": heights,
-    }
+        return {
+            "title": info.get("title", "Media_Video"),
+            "thumbnail": info.get("thumbnail"),
+            "duration": info.get("duration") or 240,
+            "uploader": info.get("uploader", "Creator"),
+            "platform": platform,
+            "max_resolution": f"{max_height}p HD" if max_height else "Original HD",
+            "available_heights": heights,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"ERROR: {str(e)}")
 
 
 @app.post("/api/download")
@@ -179,14 +157,6 @@ async def download_media(
     end_sec = parse_time_to_seconds(end_time)
 
     if start_sec is not None and end_sec is not None:
-        if end_sec <= start_sec:
-            raise HTTPException(status_code=400, detail="End time must be greater than start time.")
-        clip_len = end_sec - start_sec
-        if clip_len < 1:
-            raise HTTPException(status_code=400, detail="Minimum clip duration is 1 second.")
-        if clip_len > 180:
-            raise HTTPException(status_code=400, detail="Maximum clip duration is 3 minutes (180 seconds).")
-
         ydl_opts["download_ranges"] = download_range_func(None, [(start_sec, end_sec)])
         ydl_opts["force_keyframes_at_cuts"] = True
 
@@ -195,8 +165,8 @@ async def download_media(
             try:
                 info = ydl.extract_info(url, download=True)
             except Exception as de:
-                # 🛡️ THE DOWNLOAD SHIELD
-                ydl_opts["format"] = "b/best" 
+                # 🚨 THE DOWNLOAD SHIELD
+                ydl_opts.pop("format", None) 
                 if "extractor_args" in ydl_opts:
                     del ydl_opts["extractor_args"] 
                     
@@ -214,18 +184,10 @@ async def download_media(
                         final_path = os.path.join(DOWNLOAD_DIR, file)
                         break
 
-            if not os.path.exists(final_path):
-                raise FileNotFoundError("Processed file could not be located on server.")
-
             chosen_name = custom_title.strip() if (custom_title and custom_title.strip()) else info.get("title", "video")
             clean_title = sanitize_filename(chosen_name)
-            suffix = ""
-            if start_sec is not None and end_sec is not None:
-                suffix += "_trimmed"
-            if mode == "video" and is_muted:
-                suffix += "_muted"
-
-            download_filename = f"{clean_title}{suffix}{expected_ext}"
+            
+            download_filename = f"{clean_title}{expected_ext}"
             background_tasks.add_task(cleanup_file, final_path)
 
             return FileResponse(
