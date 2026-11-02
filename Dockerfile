@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y ffmpeg nodejs curl ca-certificates && r
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -U pip && pip install --no-cache-dir -U -r requirements.txt
+RUN pip install --no-cache-dir -U pip && pip install --no-cache-dir -U --pre -r requirements.txt
 
 COPY . .
 
