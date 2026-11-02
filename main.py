@@ -30,8 +30,7 @@ def get_base_ydl_opts():
     opts = {
         "quiet": True,
         "no_warnings": True,
-        # YAHAN FIX HAI: "format" fallback dal diya taaki info nikalte waqt kabhi crash na ho
-        "format": "bestvideo+bestaudio/best",
+        # Mobile clients bot bypass ke liye
         "extractor_args": {"youtube": {"player_client": ["android", "ios", "tv", "web_creator"]}}
     }
     
@@ -84,6 +83,9 @@ async def get_media_info(url: str = Form(...)):
         ydl_opts = get_base_ydl_opts()
         ydl_opts["skip_download"] = True
         
+        # 🔥 YAHAN FIX HAI: Fetch karte waqt strict format check hata diya
+        ydl_opts["format"] = "best"
+        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             formats = info.get("formats", [])
@@ -135,8 +137,8 @@ async def download_media(
         if quality == "best":
             ydl_opts["format"] = "bestvideo+bestaudio/best"
         else:
-            # SUPER ROBUST FALLBACK - Ab format error nahi aayega
-            ydl_opts["format"] = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/bestvideo+bestaudio/best"
+            # 🔥 SUPER FALLBACK: Agar custom quality na mile toh jo best mile wo de do
+            ydl_opts["format"] = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
 
         if is_muted:
             ydl_opts["postprocessors"] = [{
