@@ -30,15 +30,12 @@ def get_base_ydl_opts():
     opts = {
         "quiet": True,
         "no_warnings": True,
-        # Mobile clients bot bypass ke liye
+        # Mobile clients for bot bypass
         "extractor_args": {"youtube": {"player_client": ["android", "ios", "tv", "web_creator"]}}
     }
     
     if os.path.exists(COOKIE_FILE):
-        print(f"✅ COOKIE FILE FOUND AND LOADED: {COOKIE_FILE}")
         opts["cookiefile"] = COOKIE_FILE
-    else:
-        print(f"❌ WARNING: COOKIE FILE NOT FOUND AT {COOKIE_FILE}")
         
     return opts
 
@@ -83,8 +80,8 @@ async def get_media_info(url: str = Form(...)):
         ydl_opts = get_base_ydl_opts()
         ydl_opts["skip_download"] = True
         
-        # 🔥 YAHAN FIX HAI: Fetch karte waqt strict format check hata diya
-        ydl_opts["format"] = "best"
+        # 🔥 THE REAL FIX: Accept separate video+audio streams (mobile standard) as well as combined 'best' files.
+        ydl_opts["format"] = "bestvideo+bestaudio/best/b"
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -134,11 +131,11 @@ async def download_media(
             "preferredquality": quality if quality.isdigit() else "320",
         }]
     else:
+        # Ultimate fallback for downloading as well
         if quality == "best":
-            ydl_opts["format"] = "bestvideo+bestaudio/best"
+            ydl_opts["format"] = "bestvideo+bestaudio/best/b"
         else:
-            # 🔥 SUPER FALLBACK: Agar custom quality na mile toh jo best mile wo de do
-            ydl_opts["format"] = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
+            ydl_opts["format"] = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/bestvideo+bestaudio/best/b"
 
         if is_muted:
             ydl_opts["postprocessors"] = [{
