@@ -22,18 +22,26 @@ app.add_middleware(
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-COOKIE_FILE = "cookies.txt"
+# 1. FIX: Absolute Path lagaya taaki Render ise har haal me dhoondh le
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+COOKIE_FILE = os.path.join(BASE_DIR, "cookies.txt")
 
 
 def get_base_ydl_opts():
     opts = {
         "quiet": True,
         "no_warnings": True,
-        # YAHAN FIX HAI: Sirf Mobile Apps (android/ios) use karenge taaki bot block bypass ho jaye
-        "extractor_args": {"youtube": {"player_client": ["android", "ios"]}}
+        # 2. FIX: 'tv' aur 'web_creator' add kiye jo bot-check jaldi bypass karte hain
+        "extractor_args": {"youtube": {"player_client": ["android", "ios", "tv", "web_creator"]}}
     }
+    
+    # 3. FIX: Server Logs me check karne ke liye print statement
     if os.path.exists(COOKIE_FILE):
+        print(f"✅ COOKIE FILE FOUND AND LOADED: {COOKIE_FILE}")
         opts["cookiefile"] = COOKIE_FILE
+    else:
+        print(f"❌ WARNING: COOKIE FILE NOT FOUND AT {COOKIE_FILE}")
+        
     return opts
 
 
