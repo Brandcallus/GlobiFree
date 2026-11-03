@@ -1,8 +1,13 @@
 FROM python:3.11-slim
 
-# Install ffmpeg, nodejs, curl, unzip and deno (required by yt-dlp EJS)
-RUN apt-get update && apt-get install -y ffmpeg nodejs curl unzip ca-certificates && \
-    curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh && \
+# Install ffmpeg, nodejs, curl, unzip and ca-certificates
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    nodejs \
+    curl \
+    unzip \
+    ca-certificates && \
+    (curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh || true) && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -16,4 +21,4 @@ COPY . .
 
 EXPOSE 7860
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-7860}"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-7860} --timeout-keep-alive 65"]
