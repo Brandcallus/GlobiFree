@@ -40,9 +40,6 @@ JOBS_LOCK = threading.Lock()
 FEEDBACK_LOCK = threading.Lock()
 
 
-# =====================================================================
-# HELPER UTILITIES & AUTO GARBAGE COLLECTOR
-# =====================================================================
 def sanitize_filename(name: str) -> str:
     cleaned = re.sub(r'[\\/*?:"<>|]', "", str(name or "")).strip()
     return cleaned[:100] if cleaned else "GlobiFree_Media"
@@ -169,9 +166,6 @@ def get_cdn_lock(cache_key: str) -> threading.Lock:
         return CDN_KEY_LOCKS[cache_key]
 
 
-# =====================================================================
-# 1. FAST INFO FETCH
-# =====================================================================
 def fast_fetch_info(url: str) -> dict:
     platform = detect_platform_name(url)
     is_yt = platform == "YOUTUBE"
@@ -266,9 +260,6 @@ def fast_fetch_info(url: str) -> dict:
     }
 
 
-# =====================================================================
-# 2. BULLETPROOF YOUTUBE CLOUD CDN ENGINE (No yt-dlp block!)
-# =====================================================================
 def _fetch_cdn_for_format(clean_url: str, vid_id: Optional[str], cloud_fmt: str, job_id: Optional[str] = None) -> Optional[str]:
     cache_key = f"{vid_id or clean_url}:{cloud_fmt}"
 
@@ -279,7 +270,6 @@ def _fetch_cdn_for_format(clean_url: str, vid_id: Optional[str], cloud_fmt: str,
 
     key_lock = get_cdn_lock(cache_key)
     with key_lock:
-        # Check cache again after acquiring lock (in case prewarm thread just finished!)
         with CACHE_LOCK:
             cached = PREWARM_CACHE.get(cache_key)
             if cached and (time.time() - cached.get("ts", 0) < 1200):
@@ -291,7 +281,7 @@ def _fetch_cdn_for_format(clean_url: str, vid_id: Optional[str], cloud_fmt: str,
             "Origin": "https://ddownr.com",
         }
 
-        api_hosts = ["https://p.savenow.to", "https://p.oceansaver.in"]
+        api_hosts = ["https://p.oceansaver.in", "https://p.savenow.to"]
 
         for host in api_hosts:
             for _attempt in range(2):
@@ -309,7 +299,7 @@ def _fetch_cdn_for_format(clean_url: str, vid_id: Optional[str], cloud_fmt: str,
                         params=params,
                         headers=headers,
                         impersonate="chrome",
-                        timeout=10,
+                        timeout=8,
                     )
                     if init_resp.status_code != 200:
                         continue
@@ -321,17 +311,18 @@ def _fetch_cdn_for_format(clean_url: str, vid_id: Optional[str], cloud_fmt: str,
 
                     progress_urls = [
                         init_data.get("progress_url"),
-                        f"https://p.savenow.to/ajax/progress.php?id={cdn_job_id}",
                         f"https://p.oceansaver.in/ajax/progress.php?id={cdn_job_id}",
+                        f"https://p.savenow.to/ajax/progress.php?id={cdn_job_id}",
                     ]
                     progress_urls = list(dict.fromkeys([u for u in progress_urls if u]))
 
-                    for step in range(40):
-                        time.sleep(0.8)
+                    # Increased polling attempts to 75 (~35 seconds) so heavy videos never timeout!
+                    for step in range(75):
+                        time.sleep(0.5)
                         for p_url in progress_urls:
                             try:
                                 p_resp = cffi_requests.get(
-                                    p_url, headers=headers, impersonate="chrome", timeout=6
+                                    p_url, headers=headers, impersonate="chrome", timeout=5
                                 )
                                 if p_resp.status_code == 200:
                                     p_data = p_resp.json()
@@ -345,7 +336,6 @@ def _fetch_cdn_for_format(clean_url: str, vid_id: Optional[str], cloud_fmt: str,
                                             PREWARM_CACHE[cache_key] = {"url": dl_url, "ts": time.time()}
                                         return dl_url
 
-                                    # Update live progress bar on frontend
                                     raw_prog = p_data.get("progress")
                                     if job_id and isinstance(raw_prog, (int, float)) and raw_prog > 0:
                                         mapped_pct = min(92, max(40, 40 + int((raw_prog / 1000.0) * 52)))
@@ -378,7 +368,6 @@ def get_cloud_cdn_direct_link(
             primary_fmt = quality if quality in ["1080", "720", "480", "360"] else "720"
         formats_to_try = [primary_fmt, "720", "480", "360"]
 
-    # Deduplicate formats while preserving order
     formats_to_try = list(dict.fromkeys(formats_to_try))
 
     for fmt in formats_to_try:
@@ -389,9 +378,6 @@ def get_cloud_cdn_direct_link(
     return None
 
 
-# =====================================================================
-# 3. FFMPEG TRIMMING & AUDIO/VIDEO PROCESSING
-# =====================================================================
 def cut_media_segment_exact(
     source_url: str,
     out_file: Path,
@@ -459,9 +445,6 @@ def cut_media_segment_exact(
     return out_file
 
 
-# =====================================================================
-# 4. UNIVERSAL PLATFORM DOWNLOAD (Instagram, Pinterest, X, FB, Reddit)
-# =====================================================================
 def run_universal_platform_download(
     url: str,
     job_dir: Path,
@@ -529,9 +512,6 @@ def run_universal_platform_download(
     return downloaded_raw
 
 
-# =====================================================================
-# 5. BACKGROUND JOB WORKER
-# =====================================================================
 def process_download_job(
     job_id: str,
     url: str,
@@ -553,7 +533,6 @@ def process_download_job(
     try:
         update_job(job_id, progress=40)
 
-        # 1. YOUTUBE CLOUD CDN ENGINE (Guaranteed working without yt-dlp block)
         if is_yt:
             direct_cdn_url = get_cloud_cdn_direct_link(url, mode, format_type, quality, job_id=job_id)
             if not direct_cdn_url:
@@ -561,7 +540,7 @@ def process_download_job(
                 update_job(
                     job_id,
                     status="error",
-                    error="YouTube Cloud stream took too long or is busy. Please click Download once more!",
+                    error="YouTube Cloud stream is busy right now. Please click Download once more!",
                 )
                 return
 
@@ -602,7 +581,6 @@ def process_download_job(
             )
             return
 
-        # 2. OTHER PLATFORMS (Instagram, Pinterest, Reddit, X, Facebook, TikTok)
         update_job(job_id, progress=55)
         downloaded_file = run_universal_platform_download(
             url, job_dir, mode, format_type, quality, is_muted and not has_trim
@@ -631,9 +609,6 @@ def process_download_job(
         update_job(job_id, status="error", error=f"{platform.title()} download failed: {str(e)}")
 
 
-# =====================================================================
-# 6. REVIEWS & FEEDBACK STORAGE
-# =====================================================================
 DEFAULT_FEEDBACK = [
     {
         "id": "seed-1",
@@ -677,9 +652,6 @@ def save_feedback_item(item: dict) -> List[dict]:
         return current
 
 
-# =====================================================================
-# 7. API ROUTES
-# =====================================================================
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health_check():
     return {"status": "ok", "service": "GlobiFree.Pro"}
