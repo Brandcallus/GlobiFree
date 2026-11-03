@@ -2,6 +2,8 @@ import os
 import re
 import json
 import urllib.request
+import subprocess
+from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
@@ -133,7 +135,7 @@ def stream_proxy(target: str, mode: str, quality: str, format_type: str, title: 
                     chunk = response.read(1024 * 1024) # Stream in 1MB chunks instantly
                     if not chunk: break
                     yield chunk
-        except Exception as e:
+        except Exception:
             pass # Stop streaming cleanly if connection drops
 
     headers = {
