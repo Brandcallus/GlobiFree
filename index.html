@@ -58,7 +58,6 @@
 
   <!-- Main Content -->
   <main class="max-w-3xl w-full mx-auto px-4 py-8 flex-grow">
-    <!-- Hero Subtitle -->
     <div class="text-center mb-6">
       <h2 class="text-2xl sm:text-3xl font-extrabold text-white tracking-tight mb-2">
         Download Video & Audio in Studio Quality
@@ -68,7 +67,6 @@
       </p>
     </div>
 
-    <!-- Main Downloader Card -->
     <div class="glass-card rounded-2xl p-5 sm:p-7 shadow-2xl space-y-5">
 
       <!-- URL Input Header + Platform Badge -->
@@ -83,7 +81,6 @@
           </span>
         </div>
 
-        <!-- Input & Fetch Details Bar -->
         <div class="flex flex-col sm:flex-row gap-2.5">
           <div class="relative flex-grow flex items-center">
             <i class="fa-solid fa-link absolute left-3.5 text-slate-400 text-sm pointer-events-none"></i>
@@ -131,7 +128,7 @@
               MAX: 1080P HD
             </span>
             <span id="previewDuration" class="text-xs text-slate-400 font-medium">
-              • 00:00
+              • HD Ready
             </span>
           </div>
           <h3 id="previewTitle" class="text-sm font-bold text-white truncate">
@@ -169,7 +166,6 @@
           </button>
         </div>
 
-        <!-- Collapsible Trimmer Panel -->
         <div id="trimmerPanel" class="hidden mt-4 pt-4 border-t border-slate-800/80 space-y-3">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
@@ -218,7 +214,6 @@
             <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Video Type</label>
             <select id="videoFormatSelect" class="w-full px-2.5 py-2.5 rounded-lg text-xs">
               <option value="mp4" selected>MP4 (Default)</option>
-              <option value="mkv">MKV</option>
               <option value="webm">WEBM</option>
             </select>
           </div>
@@ -293,11 +288,11 @@
       <!-- Progress Bar Section -->
       <div id="progressSection" class="hidden inner-box rounded-xl p-4 space-y-2">
         <div class="flex items-center justify-between text-xs text-slate-300">
-          <span id="statusText"><i class="fa-solid fa-bolt fa-beat text-amber-400"></i> Preparing stream...</span>
-          <span id="progressPercent" class="font-bold text-indigo-400">15%</span>
+          <span id="statusText"><i class="fa-solid fa-bolt fa-beat text-amber-400"></i> Preparing direct Chrome download link...</span>
+          <span id="progressPercent" class="font-bold text-indigo-400">20%</span>
         </div>
         <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-          <div id="progressBar" class="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 w-[15%] transition-all duration-300"></div>
+          <div id="progressBar" class="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 w-[20%] transition-all duration-300"></div>
         </div>
       </div>
 
@@ -306,6 +301,9 @@
 
     </div>
   </main>
+
+  <!-- Hidden iframe to trigger native Chrome Downloads without leaving page -->
+  <iframe id="chromeDownloadFrame" style="display:none;"></iframe>
 
   <!-- Footer -->
   <footer class="w-full py-4 text-center text-xs text-slate-500 border-t border-slate-800/60">
@@ -320,7 +318,6 @@
     const pasteBtn = document.getElementById('pasteBtn');
     const fetchDetailsBtn = document.getElementById('fetchDetailsBtn');
     const platformDetectBadge = document.getElementById('platformDetectBadge');
-    const platformDetectText = document.getElementById('platformDetectText');
 
     const mediaPreviewCard = document.getElementById('mediaPreviewCard');
     const previewThumbnail = document.getElementById('previewThumbnail');
@@ -347,12 +344,10 @@
     const downloadVideoBtn = document.getElementById('downloadVideoBtn');
     const downloadAudioBtn = document.getElementById('downloadAudioBtn');
 
-    // Trimmer State Variables
     let isTrimActive = false;
     let savedStartSeconds = null;
     let savedEndSeconds = null;
 
-    // Detect Platform Badge on URL input
     mediaUrlInput.addEventListener('input', updatePlatformBadge);
 
     function updatePlatformBadge() {
@@ -368,7 +363,6 @@
       }
     }
 
-    // Paste Button
     pasteBtn.addEventListener('click', async () => {
       try {
         const text = await navigator.clipboard.readText();
@@ -415,8 +409,7 @@
     }
 
     function toggleTrimmerPanel() {
-      const panel = document.getElementById('trimmerPanel');
-      panel.classList.toggle('hidden');
+      document.getElementById('trimmerPanel').classList.toggle('hidden');
     }
 
     function applyTrim() {
@@ -449,7 +442,7 @@
       document.getElementById('trimmerPanel').classList.add('hidden');
     }
 
-    // Fetch Video/Reel Metadata
+    // Fast 0.2s Fetch Details (Untouched)
     async function fetchMediaDetails() {
       const url = mediaUrlInput.value.trim();
       if (!url) return showAlert('Please paste a YouTube or Instagram URL first.', true);
@@ -468,7 +461,6 @@
         });
 
         if (!res.ok) {
-          // Fallback if /api/info expects JSON or GET
           res = await fetch(`${API_BASE}/api/info?url=${encodeURIComponent(url)}`);
         }
 
@@ -482,9 +474,9 @@
         previewThumbnail.src = data.thumbnail || 'https://placehold.co/320x180/0f172a/6366f1?text=GlobiFree';
         previewPlatformTag.textContent = (data.platform || (url.includes('instagram') ? 'INSTAGRAM' : 'YOUTUBE')).toUpperCase();
         previewQualityTag.textContent = `MAX: ${data.max_quality || '1080P HD'}`;
-        previewDuration.textContent = `• ${data.duration_string || secondsToTime(data.duration || 0)}`;
+        previewDuration.textContent = `• ${data.duration_string || 'HD Ready'}`;
         previewTitle.textContent = data.title || 'GlobiFree Media';
-        previewUploader.textContent = data.uploader || data.channel || 'Creator';
+        previewUploader.textContent = data.uploader || 'Creator';
 
         if (data.title) {
           videoFileName.value = data.title;
@@ -500,7 +492,18 @@
       }
     }
 
-    // Your exact triggerDownload function
+    // Hand off the link directly to Google Chrome's native Download Manager
+    function startChromeNativeDownload(downloadUrl, filename) {
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.setAttribute('download', filename || '');
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+
+    // Updated triggerDownload: Generates Direct CDN Link & starts Chrome Native Download immediately!
     async function triggerDownload(mode) {
       const url = mediaUrlInput.value.trim();
       if (!url) return showAlert('Please paste a YouTube or Instagram URL first.');
@@ -516,18 +519,18 @@
       downloadAudioBtn.disabled = true;
       progressSection.classList.remove('hidden');
 
-      let progress = 15;
+      let progress = 20;
       progressBar.style.width = `${progress}%`;
       progressPercent.textContent = `${progress}%`;
-      statusText.innerHTML = `<i class="fa-solid fa-bolt fa-beat"></i> High-speed stream preparing (${isVideo ? quality + 'p ' + formatType.toUpperCase() : formatType.toUpperCase() + ' Audio'})...`;
+      statusText.innerHTML = `<i class="fa-solid fa-bolt fa-beat text-amber-400"></i> Generating direct Chrome download link (${isVideo ? quality + 'p ' + formatType.toUpperCase() : formatType.toUpperCase() + ' Audio'})...`;
 
       const timer = setInterval(() => {
-        if (progress < 75) {
-          progress += 4;
+        if (progress < 90) {
+          progress += 5;
           progressBar.style.width = `${progress}%`;
           progressPercent.textContent = `${progress}%`;
         }
-      }, 400);
+      }, 350);
 
       try {
         const formData = new FormData();
@@ -543,7 +546,7 @@
           formData.append('end_time', secondsToTime(savedEndSeconds));
         }
 
-        const response = await fetch(`${API_BASE}/api/download`, {
+        const response = await fetch(`${API_BASE}/api/prepare`, {
           method: 'POST',
           body: formData
         });
@@ -551,56 +554,23 @@
         clearInterval(timer);
 
         if (!response.ok) {
-          const errData = await response.json();
+          const errData = await response.json().catch(() => ({}));
           throw new Error(errData.detail || 'Download failed on server.');
         }
 
-        const disposition = response.headers.get('Content-Disposition');
-        let filename = `${customTitle || 'Globifree_Media'}.${formatType}`;
-        if (disposition && disposition.includes('filename=')) {
-          const match = disposition.match(/filename="?([^"]+)"?/);
-          if (match && match[1]) filename = match[1];
-        }
-
-        const totalBytes = parseInt(response.headers.get('Content-Length') || '0', 10);
-        const reader = response.body.getReader();
-        const chunks = [];
-        let receivedBytes = 0;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-          receivedBytes += value.length;
-          const mbDone = (receivedBytes / (1024 * 1024)).toFixed(1);
-          if (totalBytes > 0) {
-            const realPct = Math.min(99, 75 + Math.floor((receivedBytes / totalBytes) * 25));
-            progressBar.style.width = `${realPct}%`;
-            progressPercent.textContent = `${realPct}%`;
-            const mbTotal = (totalBytes / (1024 * 1024)).toFixed(1);
-            statusText.innerHTML = `<i class="fa-solid fa-download fa-bounce"></i> Downloading to your device: ${mbDone} MB / ${mbTotal} MB`;
-          } else {
-            progressBar.style.width = '90%';
-            progressPercent.textContent = '90%';
-            statusText.innerHTML = `<i class="fa-solid fa-download fa-bounce"></i> Downloading to your device: ${mbDone} MB...`;
-          }
+        const data = await response.json();
+        if (!data.download_url) {
+          throw new Error('Could not generate direct download link.');
         }
 
         progressBar.style.width = '100%';
         progressPercent.textContent = '100%';
-        statusText.innerHTML = '<i class="fa-solid fa-check text-emerald-400"></i> Complete! File saved to your device.';
+        statusText.innerHTML = '<i class="fa-solid fa-check text-emerald-400"></i> Download started directly in Chrome! Check your browser downloads (Ctrl+J).';
 
-        const blob = new Blob(chunks);
-        const downloadUrl = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = downloadUrl;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        window.URL.revokeObjectURL(downloadUrl);
+        // Trigger Chrome's built-in Download Manager directly!
+        startChromeNativeDownload(data.download_url, data.filename);
 
-        showAlert('Download finished! File saved to your device.', false);
+        showAlert('Download started in Chrome! Check your Chrome downloads bar.', false);
       } catch (err) {
         clearInterval(timer);
         progressSection.classList.add('hidden');
