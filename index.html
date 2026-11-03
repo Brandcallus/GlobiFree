@@ -3,97 +3,123 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GlobiFree - HD Free YouTube/Insta Downloader</title>
+  <title>GlobiFree - Pro Media Downloader</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
     body {
       font-family: 'Inter', sans-serif;
-      background-color: #070b14;
-      background-image: radial-gradient(circle at 50% 0%, rgba(88, 28, 135, 0.18), transparent 45%),
-                        radial-gradient(circle at 80% 20%, rgba(37, 99, 235, 0.12), transparent 40%);
+      background-color: #0b0f19;
+      background-image: radial-gradient(circle at 15% 50%, rgba(99, 102, 241, 0.15), transparent 25%),
+                        radial-gradient(circle at 85% 30%, rgba(236, 72, 153, 0.15), transparent 25%);
       color: #f1f5f9;
     }
     .glass-card {
-      background: rgba(15, 23, 42, 0.75);
-      backdrop-filter: blur(16px);
-      border: 1px solid rgba(51, 65, 85, 0.55);
+      background: rgba(17, 24, 39, 0.75);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
     }
     .inner-box {
-      background: rgba(11, 17, 32, 0.85);
-      border: 1px solid rgba(51, 65, 85, 0.5);
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      transition: all 0.3s ease;
+    }
+    .inner-box:hover {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: rgba(255, 255, 255, 0.1);
     }
     select, input[type="text"], input[type="number"] {
-      background-color: #0b1120;
-      border: 1px solid #1e293b;
+      background-color: rgba(0, 0, 0, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.1);
       color: #f8fafc;
     }
     select:focus, input:focus {
       outline: none;
       border-color: #6366f1;
+      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
     }
+    .btn-gradient-primary {
+      background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+      transition: all 0.3s ease;
+    }
+    .btn-gradient-primary:hover {
+      box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.4);
+      transform: translateY(-1px);
+    }
+    .btn-gradient-secondary {
+      background: linear-gradient(135deg, #ec4899 0%, #f43f5e 100%);
+      transition: all 0.3s ease;
+    }
+    .btn-gradient-secondary:hover {
+      box-shadow: 0 10px 15px -3px rgba(236, 72, 153, 0.4);
+      transform: translateY(-1px);
+    }
+    .spin-fast { animation: spin 0.8s linear infinite; }
   </style>
 </head>
 <body class="min-h-screen flex flex-col justify-between">
 
   <!-- Top Navbar -->
-  <header class="w-full border-b border-slate-800/80 bg-[#070b14]/80 backdrop-blur-md sticky top-0 z-30">
-    <div class="max-w-5xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between">
+  <header class="w-full border-b border-white/5 bg-[#0b0f19]/80 backdrop-blur-md sticky top-0 z-30">
+    <div class="max-w-5xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
       <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-purple-600/30">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/30">
           <i class="fa-solid fa-cloud-arrow-down text-white text-lg"></i>
         </div>
         <div>
-          <h1 class="font-bold text-base sm:text-lg tracking-tight text-white leading-none">GlobiFree</h1>
-          <p class="text-[11px] text-slate-400 mt-1">HD Free YouTube/Insta Downloader</p>
+          <h1 class="font-bold text-lg sm:text-xl tracking-tight text-white leading-none">GlobiFree<span class="text-indigo-400">.Pro</span></h1>
+          <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-widest font-semibold">Ultimate Media Downloader</p>
         </div>
       </div>
 
-      <button id="themeToggleBtn" class="w-9 h-9 rounded-xl bg-slate-800/80 border border-slate-700/70 flex items-center justify-center text-amber-400 hover:bg-slate-700/60 transition" title="Toggle Theme">
-        <i class="fa-solid fa-sun text-sm"></i>
+      <button id="themeToggleBtn" class="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition" title="Settings">
+        <i class="fa-solid fa-gear text-sm hover:rotate-90 transition-transform duration-500"></i>
       </button>
     </div>
   </header>
 
   <!-- Main Content -->
-  <main class="max-w-3xl w-full mx-auto px-4 py-8 flex-grow">
-    <div class="text-center mb-6">
-      <h2 class="text-2xl sm:text-3xl font-extrabold text-white tracking-tight mb-2">
-        Download Video & Audio in Studio Quality
+  <main class="max-w-4xl w-full mx-auto px-4 py-10 flex-grow flex flex-col items-center justify-center">
+    
+    <div class="text-center mb-8">
+      <h2 class="text-3xl sm:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 tracking-tight mb-3">
+        Download Without Limits.
       </h2>
-      <p class="text-xs sm:text-sm text-slate-400 max-w-xl mx-auto">
-        Paste any YouTube or Instagram link, choose your preferred format, trim a custom clip if needed, and download with zero watermarks.
+      <p class="text-sm sm:text-base text-slate-400 max-w-xl mx-auto">
+        Paste any YouTube or Instagram link below to get blazing fast, studio-quality downloads directly to your device.
       </p>
     </div>
 
-    <div class="glass-card rounded-2xl p-5 sm:p-7 shadow-2xl space-y-5">
+    <!-- Main Downloader Card -->
+    <div class="glass-card rounded-2xl w-full p-6 sm:p-8 space-y-6">
 
-      <!-- URL Input Header + Platform Badge -->
+      <!-- URL Input Area -->
       <div>
-        <div class="flex items-center justify-between mb-2">
-          <label for="mediaUrlInput" class="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-            Paste Video or Reel Link
+        <div class="flex items-center justify-between mb-3">
+          <label class="text-[11px] font-bold uppercase tracking-widest text-slate-400">
+            Paste Link Here
           </label>
-          <span id="platformDetectBadge" class="hidden text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-red-950/80 border border-red-800/70 text-red-300 flex items-center gap-1.5">
-            <i class="fa-brands fa-youtube text-red-400"></i>
+          <span id="platformDetectBadge" class="hidden text-[10px] font-bold uppercase px-3 py-1 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 flex items-center gap-1.5 transition-all">
+            <i class="fa-brands fa-youtube text-red-500"></i>
             <span id="platformDetectText">YouTube Detected</span>
           </span>
         </div>
 
-        <div class="flex flex-col sm:flex-row gap-2.5">
-          <div class="relative flex-grow flex items-center">
-            <i class="fa-solid fa-link absolute left-3.5 text-slate-400 text-sm pointer-events-none"></i>
+        <div class="flex flex-col sm:flex-row gap-3">
+          <div class="relative flex-grow flex items-center group">
+            <i class="fa-solid fa-link absolute left-4 text-slate-500 text-sm pointer-events-none group-focus-within:text-indigo-400 transition-colors"></i>
             <input
               type="text"
               id="mediaUrlInput"
-              placeholder="https://youtu.be/... or https://www.instagram.com/reel/..."
-              class="w-full pl-10 pr-20 py-3 rounded-xl text-sm text-slate-100 placeholder-slate-500 transition"
+              placeholder="https://youtu.be/... or https://instagram.com/..."
+              class="w-full pl-12 pr-20 py-4 rounded-xl text-sm text-slate-100 placeholder-slate-600 focus:bg-black/40 transition-all"
             />
             <button
               type="button"
               id="pasteBtn"
-              class="absolute right-2.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition"
+              class="absolute right-3 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold backdrop-blur-sm transition-all"
             >
               Paste
             </button>
@@ -103,214 +129,151 @@
             type="button"
             id="fetchDetailsBtn"
             onclick="fetchMediaDetails()"
-            class="px-5 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/25 transition shrink-0"
+            class="btn-gradient-primary px-8 py-4 rounded-xl text-white font-bold text-sm flex items-center justify-center gap-2 shrink-0"
           >
-            <i class="fa-solid fa-wand-magic-sparkles"></i>
-            <span>Fetch Details</span>
+            <i class="fa-solid fa-bolt"></i>
+            <span>Fetch Fast</span>
           </button>
         </div>
       </div>
 
       <!-- Media Info Preview Card -->
-      <div id="mediaPreviewCard" class="hidden inner-box rounded-xl p-3.5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
-        <img
-          id="previewThumbnail"
-          src=""
-          alt="Thumbnail"
-          class="w-full sm:w-36 h-20 object-cover rounded-lg border border-slate-800 shrink-0 bg-slate-900"
-        />
-        <div class="flex-grow min-w-0">
-          <div class="flex flex-wrap items-center gap-2 mb-1.5">
-            <span id="previewPlatformTag" class="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-indigo-950/90 text-indigo-300 border border-indigo-800/60">
+      <div id="mediaPreviewCard" class="hidden inner-box rounded-xl p-4 flex flex-col sm:flex-row items-center gap-5">
+        <div class="relative rounded-lg overflow-hidden border border-white/10 shadow-lg shrink-0 group w-full sm:w-48 h-28 bg-black/50">
+           <img id="previewThumbnail" src="" alt="Thumbnail" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
+           <div class="absolute bottom-2 right-2 bg-black/80 backdrop-blur text-white text-[10px] font-bold px-2 py-1 rounded">
+             <span id="previewDuration">00:00</span>
+           </div>
+        </div>
+        <div class="flex-grow min-w-0 w-full text-center sm:text-left">
+          <div class="flex flex-wrap items-center justify-center sm:justify-start gap-2 mb-2">
+            <span id="previewPlatformTag" class="text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
               YOUTUBE
             </span>
-            <span id="previewQualityTag" class="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-emerald-950/90 text-emerald-300 border border-emerald-800/60">
-              MAX: 1080P HD
-            </span>
-            <span id="previewDuration" class="text-xs text-slate-400 font-medium">
-              • HD Ready
+            <span id="previewQualityTag" class="text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              HD MAX
             </span>
           </div>
-          <h3 id="previewTitle" class="text-sm font-bold text-white truncate">
+          <h3 id="previewTitle" class="text-sm sm:text-base font-bold text-white truncate w-full" title="Media Title">
             Media Title
           </h3>
-          <p id="previewUploader" class="text-xs text-slate-400 truncate mt-0.5">
-            Channel
+          <p id="previewUploader" class="text-xs text-slate-400 truncate mt-1">
+            Creator Channel
           </p>
         </div>
       </div>
 
-      <!-- Video Clip Trimmer (Optional) -->
-      <div class="inner-box rounded-xl p-4">
-        <div class="flex items-center justify-between gap-3">
-          <div class="flex items-center gap-3">
-            <div class="w-9 h-9 rounded-lg bg-indigo-950/80 border border-indigo-800/60 flex items-center justify-center text-indigo-400 shrink-0">
-              <i class="fa-solid fa-scissors text-sm"></i>
+      <div id="controlsContainer" class="hidden space-y-4">
+          <!-- Video Download -->
+          <div class="inner-box rounded-xl p-5">
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-indigo-400">
+                <i class="fa-solid fa-video"></i>
+                <span>Video Stream</span>
+              </div>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" id="muteVideoCheckbox" class="sr-only peer" />
+                <div class="w-8 h-4 bg-white/10 rounded-full peer peer-checked:bg-rose-500 relative transition-all after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-3 after:h-3 after:bg-white after:rounded-full after:transition-all peer-checked:after:translate-x-4"></div>
+                <span class="text-[10px] font-bold uppercase text-slate-400 peer-checked:text-rose-400 transition-colors">
+                  Mute Audio
+                </span>
+              </label>
             </div>
-            <div>
-              <h4 class="text-xs sm:text-sm font-bold text-white">Video Clip Trimmer (Optional)</h4>
-              <p id="trimSubtext" class="text-[11px] text-slate-400">
-                Download the full video by default, or cut a custom 1s – 3m clip.
-              </p>
+
+            <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+              <div class="sm:col-span-5">
+                <input type="text" id="videoFileName" placeholder="Custom filename..." class="w-full px-4 py-3 rounded-xl text-xs" />
+              </div>
+              <div class="sm:col-span-2">
+                <select id="videoFormatSelect" class="w-full px-3 py-3 rounded-xl text-xs font-semibold">
+                  <option value="mp4" selected>MP4</option>
+                  <option value="webm">WEBM</option>
+                </select>
+              </div>
+              <div class="sm:col-span-2">
+                <select id="videoQualitySelect" class="w-full px-3 py-3 rounded-xl text-xs font-semibold">
+                  <option value="1080">1080p</option>
+                  <option value="720" selected>720p</option>
+                  <option value="480">480p</option>
+                </select>
+              </div>
+              <div class="sm:col-span-3">
+                <button
+                  type="button"
+                  id="downloadVideoBtn"
+                  onclick="triggerDownload('video')"
+                  class="btn-gradient-primary w-full py-3 rounded-xl text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <i class="fa-solid fa-download"></i>
+                  <span>Download</span>
+                </button>
+              </div>
             </div>
           </div>
 
-          <button
-            type="button"
-            id="toggleTrimBtn"
-            onclick="toggleTrimmerPanel()"
-            class="px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-indigo-300 border border-indigo-900/70 text-xs font-semibold flex items-center gap-1.5 transition shrink-0"
-          >
-            <i class="fa-solid fa-sliders"></i>
-            <span id="trimBtnLabel">Trim Video Clip</span>
-          </button>
+          <!-- Audio Download -->
+          <div class="inner-box rounded-xl p-5">
+            <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-pink-400 mb-4">
+              <i class="fa-solid fa-music"></i>
+              <span>Audio Stream</span>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+              <div class="sm:col-span-5">
+                <input type="text" id="audioFileName" placeholder="Custom filename..." class="w-full px-4 py-3 rounded-xl text-xs" />
+              </div>
+              <div class="sm:col-span-2">
+                <select id="audioFormatSelect" class="w-full px-3 py-3 rounded-xl text-xs font-semibold">
+                  <option value="mp3" selected>MP3</option>
+                  <option value="m4a">M4A</option>
+                </select>
+              </div>
+              <div class="sm:col-span-2">
+                <select id="audioQualitySelect" class="w-full px-3 py-3 rounded-xl text-xs font-semibold">
+                  <option value="320" selected>320k</option>
+                  <option value="192">192k</option>
+                  <option value="128">128k</option>
+                </select>
+              </div>
+              <div class="sm:col-span-3">
+                <button
+                  type="button"
+                  id="downloadAudioBtn"
+                  onclick="triggerDownload('audio')"
+                  class="btn-gradient-secondary w-full py-3 rounded-xl text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <i class="fa-solid fa-headphones"></i>
+                  <span>Download</span>
+                </button>
+              </div>
+            </div>
+          </div>
+      </div>
+
+      <!-- Progress Section -->
+      <div id="progressSection" class="hidden inner-box rounded-xl p-5 space-y-3">
+        <div class="flex items-center justify-between text-xs font-semibold">
+          <span id="statusText" class="text-slate-300 flex items-center gap-2">
+            <i class="fa-solid fa-circle-notch spin-fast text-indigo-400"></i> 
+            Establishing high-speed connection...
+          </span>
+          <span id="progressPercent" class="text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded">0%</span>
         </div>
-
-        <div id="trimmerPanel" class="hidden mt-4 pt-4 border-t border-slate-800/80 space-y-3">
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Start Time (Seconds or MM:SS)</label>
-              <input type="text" id="trimStartInput" placeholder="00:00" value="00:00" class="w-full px-3 py-2 rounded-lg text-xs" />
-            </div>
-            <div>
-              <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">End Time (Seconds or MM:SS)</label>
-              <input type="text" id="trimEndInput" placeholder="00:30" value="00:30" class="w-full px-3 py-2 rounded-lg text-xs" />
-            </div>
-          </div>
-          <div class="flex items-center justify-end gap-2">
-            <button type="button" onclick="clearTrim()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium">
-              Reset (Full Video)
-            </button>
-            <button type="button" onclick="applyTrim()" class="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold">
-              Apply Clip Trim
-            </button>
-          </div>
+        <div class="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+          <div id="progressBar" class="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 w-[0%] transition-all duration-300 ease-out"></div>
         </div>
       </div>
 
-      <!-- VIDEO DOWNLOAD BAR -->
-      <div class="inner-box rounded-xl p-4 space-y-3.5">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-indigo-400">
-            <i class="fa-solid fa-video"></i>
-            <span>Video Download Bar</span>
-          </div>
-
-          <label class="flex items-center gap-2 cursor-pointer select-none text-xs text-slate-300">
-            <input type="checkbox" id="muteVideoCheckbox" class="sr-only peer" />
-            <div class="w-8 h-4 bg-slate-700 rounded-full peer peer-checked:bg-rose-600 relative transition after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-3 after:h-3 after:bg-white after:rounded-full after:transition-all peer-checked:after:translate-x-4"></div>
-            <span class="flex items-center gap-1 text-[11px] text-slate-300">
-              <i class="fa-solid fa-volume-xmark text-rose-400"></i> Mute Video (No Audio)
-            </span>
-          </label>
-        </div>
-
-        <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-          <div class="sm:col-span-4">
-            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Video File Name</label>
-            <input type="text" id="videoFileName" placeholder="Custom video title..." class="w-full px-3 py-2.5 rounded-lg text-xs" />
-          </div>
-          <div class="sm:col-span-2">
-            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Video Type</label>
-            <select id="videoFormatSelect" class="w-full px-2.5 py-2.5 rounded-lg text-xs">
-              <option value="mp4" selected>MP4 (Default)</option>
-              <option value="webm">WEBM</option>
-            </select>
-          </div>
-          <div class="sm:col-span-3">
-            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Video Quality</label>
-            <select id="videoQualitySelect" class="w-full px-2.5 py-2.5 rounded-lg text-xs">
-              <option value="1080">1080p Full HD</option>
-              <option value="720" selected>720p HD (Default)</option>
-              <option value="480">480p Standard</option>
-              <option value="360">360p Medium</option>
-            </select>
-          </div>
-          <div class="sm:col-span-3">
-            <button
-              type="button"
-              id="downloadVideoBtn"
-              onclick="triggerDownload('video')"
-              class="w-full py-2.5 px-4 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-purple-600/25 transition disabled:opacity-50"
-            >
-              <i class="fa-solid fa-download"></i>
-              <span>Download Video</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- AUDIO ONLY DOWNLOAD BAR -->
-      <div class="inner-box rounded-xl p-4 space-y-3.5">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-pink-400">
-            <i class="fa-solid fa-music"></i>
-            <span>Audio Only Download Bar</span>
-          </div>
-          <span class="text-[11px] text-slate-400">Extract studio-grade audio track</span>
-        </div>
-
-        <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-          <div class="sm:col-span-4">
-            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Audio File Name</label>
-            <input type="text" id="audioFileName" placeholder="Custom audio title..." class="w-full px-3 py-2.5 rounded-lg text-xs" />
-          </div>
-          <div class="sm:col-span-2">
-            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Audio Type</label>
-            <select id="audioFormatSelect" class="w-full px-2.5 py-2.5 rounded-lg text-xs">
-              <option value="mp3" selected>MP3</option>
-              <option value="m4a">M4A</option>
-              <option value="wav">WAV</option>
-            </select>
-          </div>
-          <div class="sm:col-span-3">
-            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Audio Quality</label>
-            <select id="audioQualitySelect" class="w-full px-2.5 py-2.5 rounded-lg text-xs">
-              <option value="320" selected>320 kbps (Best Quality)</option>
-              <option value="192">192 kbps (High)</option>
-              <option value="128">128 kbps (Standard)</option>
-            </select>
-          </div>
-          <div class="sm:col-span-3">
-            <button
-              type="button"
-              id="downloadAudioBtn"
-              onclick="triggerDownload('audio')"
-              class="w-full py-2.5 px-4 rounded-lg bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-rose-600/25 transition disabled:opacity-50"
-            >
-              <i class="fa-solid fa-headphones"></i>
-              <span>Download Audio</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Progress Bar Section -->
-      <div id="progressSection" class="hidden inner-box rounded-xl p-4 space-y-2">
-        <div class="flex items-center justify-between text-xs text-slate-300">
-          <span id="statusText"><i class="fa-solid fa-bolt fa-beat text-amber-400"></i> Preparing direct Chrome download link...</span>
-          <span id="progressPercent" class="font-bold text-indigo-400">20%</span>
-        </div>
-        <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-          <div id="progressBar" class="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 w-[20%] transition-all duration-300"></div>
-        </div>
-      </div>
-
-      <!-- Alert / Error Message Box -->
-      <div id="alertBox" class="hidden rounded-xl p-4 text-xs sm:text-sm border"></div>
+      <!-- Alerts -->
+      <div id="alertBox" class="hidden rounded-xl p-4 text-xs font-medium border text-center"></div>
 
     </div>
   </main>
 
-  <!-- Hidden iframe to trigger native Chrome Downloads without leaving page -->
-  <iframe id="chromeDownloadFrame" style="display:none;"></iframe>
-
-  <!-- Footer -->
-  <footer class="w-full py-4 text-center text-xs text-slate-500 border-t border-slate-800/60">
-    &copy; 2026 GlobiFree — High-Speed Media Downloader
+  <footer class="w-full py-6 text-center text-[11px] font-semibold text-slate-500 uppercase tracking-widest border-t border-white/5">
+    &copy; 2026 GlobiFree Pro — Designed for Speed
   </footer>
 
-  <!-- Frontend Logic -->
   <script>
     const API_BASE = '';
 
@@ -318,11 +281,12 @@
     const pasteBtn = document.getElementById('pasteBtn');
     const fetchDetailsBtn = document.getElementById('fetchDetailsBtn');
     const platformDetectBadge = document.getElementById('platformDetectBadge');
+    const platformDetectText = document.getElementById('platformDetectText');
 
     const mediaPreviewCard = document.getElementById('mediaPreviewCard');
+    const controlsContainer = document.getElementById('controlsContainer');
     const previewThumbnail = document.getElementById('previewThumbnail');
     const previewPlatformTag = document.getElementById('previewPlatformTag');
-    const previewQualityTag = document.getElementById('previewQualityTag');
     const previewDuration = document.getElementById('previewDuration');
     const previewTitle = document.getElementById('previewTitle');
     const previewUploader = document.getElementById('previewUploader');
@@ -344,20 +308,16 @@
     const downloadVideoBtn = document.getElementById('downloadVideoBtn');
     const downloadAudioBtn = document.getElementById('downloadAudioBtn');
 
-    let isTrimActive = false;
-    let savedStartSeconds = null;
-    let savedEndSeconds = null;
-
     mediaUrlInput.addEventListener('input', updatePlatformBadge);
 
     function updatePlatformBadge() {
       const val = mediaUrlInput.value.trim().toLowerCase();
       if (val.includes('youtube.com') || val.includes('youtu.be')) {
-        platformDetectBadge.className = 'text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-red-950/80 border border-red-800/70 text-red-300 flex items-center gap-1.5';
-        platformDetectBadge.innerHTML = '<i class="fa-brands fa-youtube text-red-400"></i> <span>YouTube Detected</span>';
+        platformDetectBadge.className = 'text-[10px] font-bold uppercase px-3 py-1 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 flex items-center gap-1.5 transition-all';
+        platformDetectText.textContent = 'YouTube Detected';
       } else if (val.includes('instagram.com')) {
-        platformDetectBadge.className = 'text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-pink-950/80 border border-pink-800/70 text-pink-300 flex items-center gap-1.5';
-        platformDetectBadge.innerHTML = '<i class="fa-brands fa-instagram text-pink-400"></i> <span>Instagram Detected</span>';
+        platformDetectBadge.className = 'text-[10px] font-bold uppercase px-3 py-1 rounded-full bg-pink-500/10 border border-pink-500/20 text-pink-400 flex items-center gap-1.5 transition-all';
+        platformDetectText.textContent = 'Instagram Detected';
       } else {
         platformDetectBadge.classList.add('hidden');
       }
@@ -372,110 +332,45 @@
           fetchMediaDetails();
         }
       } catch (err) {
-        showAlert('Clipboard permission denied. Please paste manually (Ctrl+V).', true);
+        showAlert('Clipboard permission denied. Please paste manually.', true);
       }
     });
 
     function showAlert(message, isError = true) {
-      alertBox.className = `rounded-xl p-4 text-xs sm:text-sm border ${
+      alertBox.className = `rounded-xl p-4 text-xs font-semibold border text-center ${
         isError
-          ? 'bg-red-950/40 border-red-800/80 text-red-300'
-          : 'bg-emerald-950/40 border-emerald-800/80 text-emerald-300'
+          ? 'bg-red-500/10 border-red-500/30 text-red-400'
+          : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
       }`;
-      alertBox.textContent = message;
+      alertBox.innerHTML = message;
       alertBox.classList.remove('hidden');
     }
 
-    function secondsToTime(sec) {
-      const s = Math.max(0, Math.floor(Number(sec) || 0));
-      const hrs = Math.floor(s / 3600);
-      const mins = Math.floor((s % 3600) / 60);
-      const secs = s % 60;
-      if (hrs > 0) {
-        return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-      }
-      return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-    }
-
-    function parseTimeToSeconds(str) {
-      const clean = String(str || '').trim();
-      if (!clean) return 0;
-      if (/^\d+$/.test(clean)) return parseInt(clean, 10);
-      const parts = clean.split(':').map(Number);
-      if (parts.some(isNaN)) return null;
-      if (parts.length === 2) return parts[0] * 60 + parts[1];
-      if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-      return null;
-    }
-
-    function toggleTrimmerPanel() {
-      document.getElementById('trimmerPanel').classList.toggle('hidden');
-    }
-
-    function applyTrim() {
-      const startSec = parseTimeToSeconds(document.getElementById('trimStartInput').value);
-      const endSec = parseTimeToSeconds(document.getElementById('trimEndInput').value);
-
-      if (startSec === null || endSec === null || endSec <= startSec) {
-        return showAlert('Invalid trim times. End time must be greater than start time.', true);
-      }
-      if (endSec - startSec > 180) {
-        return showAlert('Maximum custom clip length is 3 minutes (180 seconds).', true);
-      }
-
-      isTrimActive = true;
-      savedStartSeconds = startSec;
-      savedEndSeconds = endSec;
-
-      document.getElementById('trimSubtext').textContent = `Custom clip active: ${secondsToTime(startSec)} to ${secondsToTime(endSec)}`;
-      document.getElementById('trimBtnLabel').textContent = `Trimmed (${secondsToTime(startSec)} - ${secondsToTime(endSec)})`;
-      document.getElementById('trimmerPanel').classList.add('hidden');
-      showAlert(`Clip trim applied: ${secondsToTime(startSec)} – ${secondsToTime(endSec)}`, false);
-    }
-
-    function clearTrim() {
-      isTrimActive = false;
-      savedStartSeconds = null;
-      savedEndSeconds = null;
-      document.getElementById('trimSubtext').textContent = 'Download the full video by default, or cut a custom 1s – 3m clip.';
-      document.getElementById('trimBtnLabel').textContent = 'Trim Video Clip';
-      document.getElementById('trimmerPanel').classList.add('hidden');
-    }
-
-    // Fast 0.2s Fetch Details (Untouched)
     async function fetchMediaDetails() {
       const url = mediaUrlInput.value.trim();
-      if (!url) return showAlert('Please paste a YouTube or Instagram URL first.', true);
+      if (!url) return showAlert('Please paste a valid URL first.', true);
 
       alertBox.classList.add('hidden');
       fetchDetailsBtn.disabled = true;
-      fetchDetailsBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Fetching...</span>';
+      fetchDetailsBtn.innerHTML = '<i class="fa-solid fa-circle-notch spin-fast"></i> <span>Fetching...</span>';
 
       try {
         const formData = new FormData();
         formData.append('url', url);
 
-        let res = await fetch(`${API_BASE}/api/info`, {
-          method: 'POST',
-          body: formData
-        });
-
+        let res = await fetch(`${API_BASE}/api/info`, { method: 'POST', body: formData });
         if (!res.ok) {
           res = await fetch(`${API_BASE}/api/info?url=${encodeURIComponent(url)}`);
         }
-
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.detail || 'Could not fetch video details.');
-        }
+        if (!res.ok) throw new Error('Could not fetch video details. Ensure link is public.');
 
         const data = await res.json();
 
-        previewThumbnail.src = data.thumbnail || 'https://placehold.co/320x180/0f172a/6366f1?text=GlobiFree';
-        previewPlatformTag.textContent = (data.platform || (url.includes('instagram') ? 'INSTAGRAM' : 'YOUTUBE')).toUpperCase();
-        previewQualityTag.textContent = `MAX: ${data.max_quality || '1080P HD'}`;
-        previewDuration.textContent = `• ${data.duration_string || 'HD Ready'}`;
+        previewThumbnail.src = data.thumbnail || '';
+        previewPlatformTag.textContent = (data.platform || 'MEDIA').toUpperCase();
+        previewDuration.textContent = data.duration_string || 'Ready';
         previewTitle.textContent = data.title || 'GlobiFree Media';
+        previewTitle.title = data.title || '';
         previewUploader.textContent = data.uploader || 'Creator';
 
         if (data.title) {
@@ -484,15 +379,17 @@
         }
 
         mediaPreviewCard.classList.remove('hidden');
+        controlsContainer.classList.remove('hidden');
       } catch (err) {
         showAlert(err.message, true);
+        mediaPreviewCard.classList.add('hidden');
+        controlsContainer.classList.add('hidden');
       } finally {
         fetchDetailsBtn.disabled = false;
-        fetchDetailsBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>Fetch Details</span>';
+        fetchDetailsBtn.innerHTML = '<i class="fa-solid fa-bolt"></i> <span>Fetch Fast</span>';
       }
     }
 
-    // Hand off the link directly to Google Chrome's native Download Manager
     function startChromeNativeDownload(downloadUrl, filename) {
       const a = document.createElement('a');
       a.href = downloadUrl;
@@ -503,10 +400,9 @@
       a.remove();
     }
 
-    // Updated triggerDownload: Generates Direct CDN Link & starts Chrome Native Download immediately!
     async function triggerDownload(mode) {
       const url = mediaUrlInput.value.trim();
-      if (!url) return showAlert('Please paste a YouTube or Instagram URL first.');
+      if (!url) return showAlert('Please paste a valid URL first.', true);
 
       const isVideo = mode === 'video';
       const formatType = isVideo ? videoFormatSelect.value : audioFormatSelect.value;
@@ -519,18 +415,20 @@
       downloadAudioBtn.disabled = true;
       progressSection.classList.remove('hidden');
 
-      let progress = 20;
+      let progress = 10;
       progressBar.style.width = `${progress}%`;
       progressPercent.textContent = `${progress}%`;
-      statusText.innerHTML = `<i class="fa-solid fa-bolt fa-beat text-amber-400"></i> Generating direct Chrome download link (${isVideo ? quality + 'p ' + formatType.toUpperCase() : formatType.toUpperCase() + ' Audio'})...`;
+      statusText.innerHTML = `<i class="fa-solid fa-circle-notch spin-fast text-indigo-400"></i> Authorizing fast direct link...`;
 
+      // Simulates fast progress since API returns quickly now
       const timer = setInterval(() => {
-        if (progress < 90) {
-          progress += 5;
+        if (progress < 95) {
+          progress += Math.floor(Math.random() * 15) + 5;
+          if (progress > 95) progress = 95;
           progressBar.style.width = `${progress}%`;
           progressPercent.textContent = `${progress}%`;
         }
-      }, 350);
+      }, 500);
 
       try {
         const formData = new FormData();
@@ -541,11 +439,6 @@
         formData.append('mute_video', muteVideo);
         if (customTitle) formData.append('custom_title', customTitle);
 
-        if (isTrimActive && savedStartSeconds !== null && savedEndSeconds !== null) {
-          formData.append('start_time', secondsToTime(savedStartSeconds));
-          formData.append('end_time', secondsToTime(savedEndSeconds));
-        }
-
         const response = await fetch(`${API_BASE}/api/prepare`, {
           method: 'POST',
           body: formData
@@ -553,28 +446,29 @@
 
         clearInterval(timer);
 
-        if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.detail || 'Download failed on server.');
-        }
+        if (!response.ok) throw new Error('Failed to generate high-speed link.');
 
         const data = await response.json();
-        if (!data.download_url) {
-          throw new Error('Could not generate direct download link.');
-        }
+        if (!data.download_url) throw new Error('Could not generate download link.');
 
         progressBar.style.width = '100%';
         progressPercent.textContent = '100%';
-        statusText.innerHTML = '<i class="fa-solid fa-check text-emerald-400"></i> Download started directly in Chrome! Check your browser downloads (Ctrl+J).';
+        statusText.innerHTML = '<i class="fa-solid fa-check text-emerald-400"></i> Download started! Check browser (Ctrl+J).';
 
-        // Trigger Chrome's built-in Download Manager directly!
         startChromeNativeDownload(data.download_url, data.filename);
+        showAlert('<i class="fa-solid fa-circle-check mr-2"></i> File is downloading in Chrome!', false);
 
-        showAlert('Download started in Chrome! Check your Chrome downloads bar.', false);
+        // Hide progress bar after 3 seconds for clean UI
+        setTimeout(() => {
+            progressSection.classList.add('hidden');
+            progressBar.style.width = '0%';
+            progressPercent.textContent = '0%';
+        }, 3000);
+
       } catch (err) {
         clearInterval(timer);
         progressSection.classList.add('hidden');
-        showAlert(err.message, true);
+        showAlert(`<i class="fa-solid fa-triangle-exclamation mr-2"></i> ${err.message}`, true);
       } finally {
         downloadVideoBtn.disabled = false;
         downloadAudioBtn.disabled = false;
