@@ -29,8 +29,17 @@ COOKIES_FILE = Path("cookies.txt")
 
 
 def sanitize_filename(name: str) -> str:
+    # Remove filesystem illegal chars
     cleaned = re.sub(r'[\\/*?:"<>|]', "", name).strip()
-    return cleaned[:120] if cleaned else "GlobiFree_Media"
+    return cleaned[:100] if cleaned else "GlobiFree_Media"
+
+
+def ascii_safe_filename(name: str) -> str:
+    # Safe ASCII header filename to prevent Uvicorn latin-1 header crash
+    cleaned = sanitize_filename(name)
+    ascii_name = cleaned.encode("ascii", "ignore").decode("ascii").strip()
+    ascii_name = re.sub(r"\s+", " ", ascii_name)
+    return ascii_name if len(ascii_name) > 2 else "GlobiFree_Media"
 
 
 def cleanup_dir(path: Path):
@@ -43,7 +52,7 @@ def cleanup_dir(path: Path):
 
 def format_duration(seconds: Optional[int]) -> str:
     if not seconds:
-        return "Ready"
+        return "HD Ready"
     seconds = int(seconds)
     hrs, rem = divmod(seconds, 3600)
     mins, secs = divmod(rem, 60)
@@ -66,7 +75,7 @@ def extract_youtube_id(url: str) -> Optional[str]:
 def fast_fetch_info(url: str) -> dict:
     is_yt = "youtube.com" in url.lower() or "youtu.be" in url.lower()
 
-    # 1. INSTANT 0.2s YouTube Fetch via Official oEmbed (Zero 403 / Zero Rate-Limit)
+    # 1. INSTANT 0.2s YouTube Fetch via Official oEmbed (Untouched & Super Fast)
     if is_yt:
         vid_id = extract_youtube_id(url)
         clean_yt_url = f"https://www.youtube.com/watch?v={vid_id}" if vid_id else url
@@ -108,7 +117,7 @@ def fast_fetch_info(url: str) -> dict:
     if is_yt:
         cmd += [
             "--extractor-args",
-            "youtube:player_client=tv_embedded,android_vr,ios,mweb;player_skip=webpage,configs",
+            "youtube:player_client=android_vr,tv;player_skip=webpage,configs",
         ]
     if COOKIES_FILE.exists():
         cmd += ["--cookies", str(COOKIES_FILE)]
@@ -136,7 +145,7 @@ def fast_fetch_info(url: str) -> dict:
 
 
 @app.get("/", response_class=HTMLResponse)
-async def serve_home():
+def serve_home():
     html_path = Path("index.html")
     if html_path.exists():
         return html_path.read_text(encoding="utf-8")
@@ -144,7 +153,7 @@ async def serve_home():
 
 
 @app.api_route("/api/info", methods=["GET", "POST"])
-async def api_info(
+def api_info(
     url_form: Optional[str] = Form(None, alias="url"),
     url_query: Optional[str] = Query(None, alias="url"),
 ):
@@ -175,16 +184,13 @@ def run_ytdlp_cli_download(
         "--no-check-certificates",
         "--geo-bypass",
         "--impersonate", "chrome",
-        "--concurrent-fragments", "8",
+        "--concurrent-fragments", "12",
+        "--http-chunk-size", "10M",
+        "--socket-timeout", "15",
+        "--retries", "2",
+        "--fragment-retries", "2",
         "-o", output_template,
     ]
-
-    # Use aria2c for blazing fast 16-connection downloads when not trimming
-    if not is_trimmed and shutil.which("aria2c"):
-        cmd += [
-            "--downloader", "aria2c",
-            "--downloader-args", "aria2c:-x 16 -s 16 -k 1M --summary-interval=0",
-        ]
 
     if COOKIES_FILE.exists():
         cmd += ["--cookies", str(COOKIES_FILE)]
@@ -194,16 +200,26 @@ def run_ytdlp_cli_download(
 
     if mode == "audio":
         cmd += [
-            "-f", "bestaudio/best",
+            "-f", "bestaudio[protocol^=http]/bestaudio/best",
             "-x",
             "--audio-format", format_type,
             "--audio-quality", f"{quality}K" if quality.isdigit() else "0",
         ]
     else:
         if is_muted:
-            fmt = f"bestvideo[height<={quality}]/bestvideo/best"
+            fmt = (
+                f"bestvideo[height<={quality}][ext=mp4][protocol^=http]/"
+                f"bestvideo[height<={quality}][protocol^=http]/"
+                f"bestvideo[height<={quality}]/bestvideo/best"
+            )
         else:
-            fmt = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
+            # Prefer direct HTTP MP4/M4A streams over slow HLS m3u8 segments
+            fmt = (
+                f"bestvideo[height<={quality}][ext=mp4][protocol^=http]+bestaudio[ext=m4a][protocol^=http]/"
+                f"best[height<={quality}][ext=mp4][protocol^=http]/"
+                f"bestvideo[height<={quality}]+bestaudio/"
+                f"best[height<={quality}]/best"
+            )
         cmd += ["-f", fmt, "--merge-output-format", format_type]
 
     if is_trimmed:
@@ -214,17 +230,17 @@ def run_ytdlp_cli_download(
 
     cmd.append(url)
 
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=65)
     if proc.returncode == 0:
-        files = list(job_dir.glob("media.*"))
-        if files:
+        files = [f for f in job_dir.glob("media.*") if not f.name.endswith(".part")]
+        if files and files[0].stat().st_size > 0:
             return files[0]
 
-    # Clean partial files on failure
     for f in job_dir.glob("*"):
         f.unlink(missing_ok=True)
 
-    raise RuntimeError(proc.stderr.strip().splitlines()[-1] if proc.stderr else "yt-dlp failed")
+    err_lines = [line for line in (proc.stderr or "").splitlines() if line.strip()]
+    raise RuntimeError(err_lines[-1] if err_lines else "Direct stream failed")
 
 
 def download_with_pytubefix(
@@ -241,7 +257,8 @@ def download_with_pytubefix(
 
     yt = None
     last_e = None
-    for client in ["WEB_EMBED", "IOS", "MWEB", "TV", "ANDROID_VR"]:
+    # ANDROID_VR is the fastest & most reliable client on cloud IPs
+    for client in ["ANDROID_VR", "WEB_EMBED", "IOS", "MWEB", "TV"]:
         try:
             yt = YouTube(url, client=client)
             _ = yt.streams
@@ -256,6 +273,8 @@ def download_with_pytubefix(
 
     if mode == "audio":
         audio_stream = yt.streams.get_audio_only()
+        if not audio_stream:
+            audio_stream = yt.streams.filter(only_audio=True).first()
         raw_audio = Path(audio_stream.download(output_path=str(job_dir), filename="raw_audio"))
         cmd = ["ffmpeg", "-y", "-i", str(raw_audio)]
         if start_time and end_time:
@@ -264,23 +283,34 @@ def download_with_pytubefix(
             cmd += ["-vn", "-ab", f"{quality}k", str(out_file)]
         else:
             cmd += ["-vn", str(out_file)]
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, timeout=45)
         return out_file
 
     target_res = f"{quality}p"
-    vid_stream = (
-        yt.streams.filter(res=target_res, file_extension="mp4", progressive=True).first()
-        or yt.streams.filter(res=target_res, file_extension="mp4").first()
-        or yt.streams.get_highest_resolution()
-    )
+    # 1. For fast 720p/360p, prefer progressive stream (video+audio already merged = instant download)
+    vid_stream = None
+    if not mute_video:
+        vid_stream = yt.streams.filter(res=target_res, file_extension="mp4", progressive=True).first()
+
+    if not vid_stream:
+        vid_stream = (
+            yt.streams.filter(res=target_res, file_extension="mp4").first()
+            or yt.streams.filter(progressive=True, file_extension="mp4").order_by("resolution").desc().first()
+            or yt.streams.get_highest_resolution()
+        )
+
     raw_vid = Path(vid_stream.download(output_path=str(job_dir), filename="raw_video.mp4"))
+
+    # If no extra processing is needed, return the downloaded MP4 directly!
+    if vid_stream.is_progressive and not mute_video and not (start_time and end_time) and format_type == "mp4":
+        return raw_vid
 
     cmd = ["ffmpeg", "-y", "-i", str(raw_vid)]
     if not vid_stream.is_progressive and not mute_video:
         aud_stream = yt.streams.get_audio_only()
         if aud_stream:
             raw_aud = Path(aud_stream.download(output_path=str(job_dir), filename="raw_audio"))
-            cmd += ["-i", str(raw_aud), "-c:v", "copy", "-c:a", "aac"]
+            cmd += ["-i", str(raw_aud), "-c:v", "copy", "-c:a", "aac", "-shortest"]
         else:
             cmd += ["-c", "copy"]
     elif mute_video:
@@ -292,12 +322,13 @@ def download_with_pytubefix(
         cmd += ["-ss", start_time, "-to", end_time]
 
     cmd.append(str(out_file))
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, timeout=60)
     return out_file
 
 
+# Notice: Changed from `async def` to `def` so FastAPI runs downloads in a threadpool without freezing!
 @app.post("/api/download")
-async def api_download(
+def api_download(
     background_tasks: BackgroundTasks,
     url: str = Form(...),
     mode: str = Form("video"),
@@ -322,38 +353,41 @@ async def api_download(
         except Exception:
             custom_title = "GlobiFree_Media"
 
-    safe_title = sanitize_filename(custom_title or "GlobiFree_Media")
+    safe_header_title = ascii_safe_filename(custom_title or "GlobiFree_Media")
     downloaded_file: Optional[Path] = None
     last_error = None
 
-    # Fast strategies without any sleep delays
-    strategies = (
-        [
-            "youtube:player_client=tv_embedded,ios,android_vr;player_skip=webpage,configs",
-            "youtube:player_client=mweb,web_embedded,tv",
-        ]
-        if is_yt
-        else [None]
-    )
-
-    for strat in strategies:
-        try:
-            downloaded_file = run_ytdlp_cli_download(
-                url, job_dir, mode, format_type, quality, is_muted, start_time, end_time, strat
-            )
-            if downloaded_file and downloaded_file.exists():
-                break
-        except Exception as e:
-            last_error = e
-
-    # Fast fallback to pytubefix WEB_EMBED/IOS for YouTube
-    if not downloaded_file and is_yt:
+    # 1. For YouTube: Try pytubefix ANDROID_VR first (fastest direct stream without HLS/aria2c hang)
+    if is_yt:
         try:
             downloaded_file = download_with_pytubefix(
                 url, job_dir, mode, format_type, quality, is_muted, start_time, end_time
             )
         except Exception as e:
             last_error = e
+            for f in job_dir.glob("*"):
+                f.unlink(missing_ok=True)
+
+    # 2. Try yt-dlp CLI with android_vr (for Instagram or YouTube fallback)
+    if not downloaded_file or not downloaded_file.exists():
+        strategies = (
+            [
+                "youtube:player_client=android_vr;player_skip=webpage,configs",
+                "youtube:player_client=tv,web_embedded;player_skip=webpage,configs",
+            ]
+            if is_yt
+            else [None]
+        )
+
+        for strat in strategies:
+            try:
+                downloaded_file = run_ytdlp_cli_download(
+                    url, job_dir, mode, format_type, quality, is_muted, start_time, end_time, strat
+                )
+                if downloaded_file and downloaded_file.exists():
+                    break
+            except Exception as e:
+                last_error = e
 
     if not downloaded_file or not downloaded_file.exists():
         cleanup_dir(job_dir)
@@ -363,7 +397,7 @@ async def api_download(
         )
 
     final_ext = downloaded_file.suffix.lstrip(".") or format_type
-    final_filename = f"{safe_title}.{final_ext}"
+    final_filename = f"{safe_header_title}.{final_ext}"
     file_size = downloaded_file.stat().st_size
 
     background_tasks.add_task(cleanup_dir, job_dir)
