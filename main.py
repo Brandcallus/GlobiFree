@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from urllib.parse import quote
 
-from fastapi import FastAPI, Form, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, Form, HTTPException, Query, BackgroundTasks, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from curl_cffi import requests as cffi_requests
@@ -29,7 +29,11 @@ TEMP_DIR = Path("/tmp/globifree_downloads")
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 COOKIES_FILE = Path("cookies.txt")
 
-# In-memory Turbo Cache for Pre-Warmed Cloud Jobs
+# Persistent Keep-Alive Chrome Session for 2x Faster Cloud Handshakes
+HTTP_SESSION = cffi_requests.Session(impersonate="chrome")
+
+# In-memory Turbo Caches
+INFO_CACHE: Dict[str, Dict[str, Any]] = {}
 JOB_CACHE: Dict[str, Dict[str, Any]] = {}
 JOBS_BY_ID: Dict[str, Dict[str, Any]] = {}
 CACHE_LOCK = threading.Lock()
@@ -91,13 +95,19 @@ def extract_youtube_id(url: str) -> Optional[str]:
 
 
 # =====================================================================
-# 1. INSTANT 0.2s FETCH INFO
+# 1. INSTANT 0.2s FETCH INFO (With Memory Cache)
 # =====================================================================
 def fast_fetch_info(url: str) -> dict:
     is_yt = "youtube.com" in url.lower() or "youtu.be" in url.lower()
+    vid_id = extract_youtube_id(url) if is_yt else None
+    cache_key = vid_id or url.strip()
+
+    with CACHE_LOCK:
+        cached_info = INFO_CACHE.get(cache_key)
+        if cached_info and (time.time() - cached_info.get("_ts", 0) < 1800):
+            return {k: v for k, v in cached_info.items() if k != "_ts"}
 
     if is_yt:
-        vid_id = extract_youtube_id(url)
         clean_yt_url = f"https://www.youtube.com/watch?v={vid_id}" if vid_id else url
         oembed_urls = [
             f"https://www.youtube.com/oembed?url={quote(clean_yt_url)}&format=json",
@@ -105,14 +115,14 @@ def fast_fetch_info(url: str) -> dict:
         ]
         for oembed_endpoint in oembed_urls:
             try:
-                resp = cffi_requests.get(oembed_endpoint, impersonate="chrome", timeout=4)
+                resp = HTTP_SESSION.get(oembed_endpoint, timeout=3)
                 if resp.status_code == 200:
                     data = resp.json()
                     if data.get("title"):
                         thumb = data.get("thumbnail_url") or (
                             f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg" if vid_id else ""
                         )
-                        return {
+                        result = {
                             "title": data.get("title"),
                             "uploader": data.get("author_name") or "YouTube Creator",
                             "duration": 0,
@@ -121,6 +131,9 @@ def fast_fetch_info(url: str) -> dict:
                             "platform": "YOUTUBE",
                             "max_quality": "1080P HD",
                         }
+                        with CACHE_LOCK:
+                            INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
+                        return result
             except Exception:
                 pass
 
@@ -139,7 +152,7 @@ def fast_fetch_info(url: str) -> dict:
         if proc.returncode == 0 and proc.stdout.strip():
             info = json.loads(proc.stdout.splitlines()[0])
             duration = info.get("duration") or 0
-            return {
+            result = {
                 "title": info.get("title") or "GlobiFree Media",
                 "uploader": info.get("uploader") or info.get("channel") or "Creator",
                 "duration": duration,
@@ -148,6 +161,9 @@ def fast_fetch_info(url: str) -> dict:
                 "platform": "INSTAGRAM" if "instagram.com" in url.lower() else "YOUTUBE",
                 "max_quality": "1080P HD",
             }
+            with CACHE_LOCK:
+                INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
+            return result
     except Exception:
         pass
 
@@ -155,7 +171,7 @@ def fast_fetch_info(url: str) -> dict:
 
 
 # =====================================================================
-# 2. TURBO CLOUD ENGINE WITH BACKGROUND PRE-WARMING
+# 2. TURBO CLOUD ENGINE WITH PARALLEL PRE-WARMING
 # =====================================================================
 CLOUD_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -179,20 +195,18 @@ def _background_poll_worker(internal_id: str):
         return
 
     progress_urls = entry.get("progress_urls", [])
-    # Poll rapidly (every 0.45s) up to 75 times (~34 seconds max for huge videos)
-    for _ in range(75):
+    # Fast polling: every 0.25s for the first 25 checks, then 0.45s
+    for attempt in range(90):
         if entry.get("status") == "ready":
             return
         for p_url in progress_urls:
             try:
-                p_resp = cffi_requests.get(
-                    p_url, headers=CLOUD_HEADERS, impersonate="chrome", timeout=5
-                )
+                p_resp = HTTP_SESSION.get(p_url, headers=CLOUD_HEADERS, timeout=4)
                 if p_resp.status_code == 200:
                     p_data = p_resp.json()
                     raw_prog = p_data.get("progress")
                     if isinstance(raw_prog, (int, float)):
-                        pct = min(98, max(15, int(raw_prog / 10)))
+                        pct = min(98, max(20, int(raw_prog / 10)))
                         entry["progress"] = pct
 
                     dl_url = p_data.get("download_url")
@@ -208,7 +222,7 @@ def _background_poll_worker(internal_id: str):
                         return
             except Exception:
                 continue
-        time.sleep(0.45)
+        time.sleep(0.25 if attempt < 25 else 0.45)
 
     if entry.get("status") != "ready":
         entry["status"] = "failed"
@@ -249,12 +263,11 @@ def start_or_get_cloud_job(
                 "iframe_source": "https://ddownr.com/",
                 "url": clean_url,
             }
-            init_resp = cffi_requests.get(
+            init_resp = HTTP_SESSION.get(
                 f"{host}/ajax/download.php",
                 params=params,
                 headers=CLOUD_HEADERS,
-                impersonate="chrome",
-                timeout=8,
+                timeout=7,
             )
             if init_resp.status_code != 200:
                 continue
@@ -269,7 +282,6 @@ def start_or_get_cloud_job(
                 progress_urls.append(init_data.get("progress_url"))
             progress_urls.append(f"https://p.savenow.to/ajax/progress.php?id={remote_id}")
             progress_urls.append(f"https://p.oceansaver.in/ajax/progress.php?id={remote_id}")
-            # Deduplicate while preserving order
             progress_urls = list(dict.fromkeys(progress_urls))
 
             internal_id = str(uuid.uuid4())
@@ -278,7 +290,7 @@ def start_or_get_cloud_job(
                 "remote_id": remote_id,
                 "cache_key": cache_key,
                 "status": "processing",
-                "progress": 20,
+                "progress": 25,
                 "download_url": None,
                 "progress_urls": progress_urls,
                 "created_at": time.time(),
@@ -298,12 +310,13 @@ def start_or_get_cloud_job(
 
 
 def prewarm_youtube_defaults(url: str):
-    """Starts 720p MP4 and MP3 320k conversion immediately in background when user clicks Fetch!"""
-    try:
-        start_or_get_cloud_job(url, "video", "mp4", "720")
-        start_or_get_cloud_job(url, "audio", "mp3", "320")
-    except Exception:
-        pass
+    """Fires 720p MP4 and MP3 320k simultaneously in parallel threads on Fetch!"""
+    threading.Thread(
+        target=start_or_get_cloud_job, args=(url, "video", "mp4", "720"), daemon=True
+    ).start()
+    threading.Thread(
+        target=start_or_get_cloud_job, args=(url, "audio", "mp3", "320"), daemon=True
+    ).start()
 
 
 # =====================================================================
@@ -367,8 +380,14 @@ def run_local_fallback_download(
 
 
 # =====================================================================
-# 4. API ROUTES
+# 4. API ROUTES (Including Ad-Safe /health Bot Endpoint)
 # =====================================================================
+@app.api_route("/health", methods=["GET", "HEAD"])
+def health_check():
+    """Dedicated lightweight keep-alive endpoint for UptimeRobot (Zero Ad Traffic)"""
+    return {"status": "ok", "service": "GlobiFree.Pro"}
+
+
 @app.get("/", response_class=HTMLResponse)
 def serve_home():
     html_path = Path("index.html")
@@ -388,9 +407,9 @@ def api_info(
 
     info = fast_fetch_info(target_url)
 
-    # Immediately pre-warm 720p MP4 and MP3 in the background for 0.1s instant download!
+    # Start parallel pre-warming for 720p MP4 and MP3 immediately
     if info.get("platform") == "YOUTUBE":
-        threading.Thread(target=prewarm_youtube_defaults, args=(target_url,), daemon=True).start()
+        prewarm_youtube_defaults(target_url)
 
     return info
 
@@ -437,8 +456,8 @@ def api_prepare(
     if is_yt and not is_muted:
         entry = start_or_get_cloud_job(url, mode, format_type, quality, start_time, end_time)
         if entry:
-            # Wait up to 2.5 seconds in case it's already pre-warmed or finishes right away
-            for _ in range(10):
+            # Check quickly (up to 1.8s) in case pre-warmed link is already ready
+            for _ in range(9):
                 if entry["status"] == "ready" and entry.get("download_url"):
                     return JSONResponse(
                         {
@@ -449,15 +468,14 @@ def api_prepare(
                     )
                 if entry["status"] == "failed":
                     break
-                time.sleep(0.25)
+                time.sleep(0.2)
 
-            # Still processing? Return job_id so frontend shows real-time progress without timing out!
             if entry["status"] == "processing":
                 return JSONResponse(
                     {
                         "status": "processing",
                         "job_id": entry["job_id"],
-                        "progress": entry.get("progress", 35),
+                        "progress": entry.get("progress", 40),
                         "filename": final_filename,
                     }
                 )
