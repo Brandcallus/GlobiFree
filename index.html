@@ -48,7 +48,6 @@
     </div>
 
     <div class="glass-card rounded-2xl w-full p-6 sm:p-8 space-y-6">
-      <!-- Input Area -->
       <div class="flex flex-col sm:flex-row gap-3">
         <div class="relative flex-grow flex items-center group">
           <i class="fa-solid fa-link absolute left-4 text-slate-500 text-sm group-focus-within:text-indigo-400"></i>
@@ -60,7 +59,6 @@
         </button>
       </div>
 
-      <!-- Preview Card -->
       <div id="mediaPreviewCard" class="hidden inner-box rounded-xl p-4 flex flex-col sm:flex-row items-center gap-5">
         <div class="relative rounded-lg overflow-hidden border border-white/10 shrink-0 w-full sm:w-48 h-28 bg-black/50">
            <img id="previewThumbnail" src="" class="w-full h-full object-cover" />
@@ -74,9 +72,7 @@
         </div>
       </div>
 
-      <!-- Controls -->
       <div id="controlsContainer" class="hidden space-y-4">
-          <!-- Video -->
           <div class="inner-box rounded-xl p-5">
             <div class="text-xs font-bold uppercase text-indigo-400 mb-4"><i class="fa-solid fa-video mr-2"></i>Video Download</div>
             <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
@@ -84,9 +80,9 @@
               <div class="sm:col-span-2"><select id="videoFormatSelect" class="w-full px-3 py-3 rounded-xl text-xs"><option value="mp4">MP4</option></select></div>
               <div class="sm:col-span-2">
                 <select id="videoQualitySelect" class="w-full px-3 py-3 rounded-xl text-xs">
+                  <option value="1080">1080p HD</option>
                   <option value="720" selected>720p HD</option>
                   <option value="480">480p</option>
-                  <option value="360">360p</option>
                 </select>
               </div>
               <div class="sm:col-span-3">
@@ -97,7 +93,6 @@
             </div>
           </div>
 
-          <!-- Audio -->
           <div class="inner-box rounded-xl p-5">
             <div class="text-xs font-bold uppercase text-pink-400 mb-4"><i class="fa-solid fa-music mr-2"></i>Audio Download</div>
             <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
@@ -118,7 +113,7 @@
   </main>
 
   <footer class="w-full py-6 text-center text-[11px] font-semibold text-slate-500 uppercase tracking-widest border-t border-white/5">
-    &copy; 2026 GlobiFree Pro — Instant Engine
+    &copy; 2026 GlobiFree Pro — Instant Client-Side Engine
   </footer>
 
   <script>
@@ -165,29 +160,47 @@
       }
     }
 
+    // Completely client-side execution to bypass Server Blocking!
     async function triggerDownload(mode) {
       const url = mediaUrlInput.value.trim();
-      const formatType = mode === 'video' ? document.getElementById('videoFormatSelect').value : document.getElementById('audioFormatSelect').value;
-      const quality = mode === 'video' ? document.getElementById('videoQualitySelect').value : document.getElementById('audioQualitySelect').value;
-      const title = mode === 'video' ? document.getElementById('videoFileName').value : document.getElementById('audioFileName').value;
+      const quality = mode === 'video' ? document.getElementById('videoQualitySelect').value : null;
       const btn = mode === 'video' ? document.getElementById('downloadVideoBtn') : document.getElementById('downloadAudioBtn');
       const oldHtml = btn.innerHTML;
+      
+      alertBox.classList.add('hidden');
+      btn.innerHTML = '<i class="fa-solid fa-circle-notch spin-fast"></i> Processing...';
+      btn.disabled = true;
 
-      btn.innerHTML = '<i class="fa-solid fa-circle-notch spin-fast"></i> Starting...';
       try {
-        const formData = new URLSearchParams({ url, mode, format_type: formatType, quality, custom_title: title });
-        const res = await fetch(`${API_BASE}/api/prepare`, { method: 'POST', body: formData });
-        const data = await res.json();
+        const payload = {
+            url: url,
+            vQuality: quality || "720",
+            isAudioOnly: mode === 'audio',
+            filenamePattern: "basic"
+        };
         
-        if (data.download_url) {
-            showAlert('<i class="fa-solid fa-check"></i> Download starting in Chrome!', false);
-            // This triggers Chrome's native downloader cleanly via the Proxy URL
-            window.location.href = data.download_url;
-        }
+        // Use Cobalt API directly from the browser (Uses the User's IP, avoids Render IP ban)
+        const cobaltRes = await fetch("https://api.cobalt.tools/api/json", {
+            method: "POST",
+            headers: {
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!cobaltRes.ok) throw new Error("Could not process video. Service might be busy.");
+        const data = await cobaltRes.json();
+        
+        if (data.status === "error" || !data.url) throw new Error("Video is not supported or blocked.");
+
+        showAlert('<i class="fa-solid fa-check"></i> Download starting in Chrome!', false);
+        window.location.href = data.url;
       } catch (err) {
         showAlert('Download failed to start.', true);
       } finally {
         btn.innerHTML = oldHtml;
+        btn.disabled = false;
       }
     }
   </script>
