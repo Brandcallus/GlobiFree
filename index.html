@@ -3,206 +3,714 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GlobiFree - Pro Media Downloader</title>
+  <title>GlobiFree.Pro — Ultra-Fast YouTube & Instagram Downloader</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-    body { font-family: 'Inter', sans-serif; background-color: #0b0f19; background-image: radial-gradient(circle at 15% 50%, rgba(99, 102, 241, 0.15), transparent 25%), radial-gradient(circle at 85% 30%, rgba(236, 72, 153, 0.15), transparent 25%); color: #f1f5f9; }
-    .glass-card { background: rgba(17, 24, 39, 0.75); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.08); box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
-    .inner-box { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); transition: all 0.3s ease; }
-    .inner-box:hover { background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.1); }
-    select, input[type="text"] { background-color: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.1); color: #f8fafc; }
-    select:focus, input:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2); }
-    .btn-gradient-primary { background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); transition: all 0.3s ease; }
-    .btn-gradient-primary:hover { box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.4); transform: translateY(-1px); }
-    .btn-gradient-secondary { background: linear-gradient(135deg, #ec4899 0%, #f43f5e 100%); transition: all 0.3s ease; }
-    .btn-gradient-secondary:hover { box-shadow: 0 10px 15px -3px rgba(236, 72, 153, 0.4); transform: translateY(-1px); }
-    .spin-fast { animation: spin 0.8s linear infinite; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #070b14;
+      background-image:
+        radial-gradient(circle at 15% 15%, rgba(99, 102, 241, 0.16), transparent 32%),
+        radial-gradient(circle at 85% 25%, rgba(236, 72, 153, 0.14), transparent 32%),
+        radial-gradient(circle at 50% 90%, rgba(16, 185, 129, 0.08), transparent 35%);
+      color: #f1f5f9;
+    }
+    .glass-card {
+      background: rgba(15, 23, 42, 0.78);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+    }
+    .inner-box {
+      background: rgba(11, 17, 32, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      transition: all 0.25s ease;
+    }
+    .inner-box:hover {
+      border-color: rgba(99, 102, 241, 0.3);
+    }
+    select, input[type="text"] {
+      background-color: #070b14;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #f8fafc;
+    }
+    select:focus, input[type="text"]:focus {
+      outline: none;
+      border-color: #6366f1;
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+    }
+    .btn-gradient-primary {
+      background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+      transition: all 0.25s ease;
+    }
+    .btn-gradient-primary:hover:not(:disabled) {
+      box-shadow: 0 10px 20px -5px rgba(99, 102, 241, 0.5);
+      transform: translateY(-1px);
+    }
+    .btn-gradient-secondary {
+      background: linear-gradient(135deg, #ec4899 0%, #f43f5e 100%);
+      transition: all 0.25s ease;
+    }
+    .btn-gradient-secondary:hover:not(:disabled) {
+      box-shadow: 0 10px 20px -5px rgba(236, 72, 153, 0.5);
+      transform: translateY(-1px);
+    }
+    .spin-fast { animation: spin 0.75s linear infinite; }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   </style>
 </head>
 <body class="min-h-screen flex flex-col justify-between">
 
-  <header class="w-full border-b border-white/5 bg-[#0b0f19]/80 backdrop-blur-md sticky top-0 z-30">
-    <div class="max-w-5xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
+  <!-- Navbar -->
+  <header class="w-full border-b border-white/10 bg-[#070b14]/85 backdrop-blur-md sticky top-0 z-30">
+    <div class="max-w-5xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between">
       <div class="flex items-center gap-3">
         <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/30">
           <i class="fa-solid fa-cloud-arrow-down text-white text-lg"></i>
         </div>
         <div>
-          <h1 class="font-bold text-lg sm:text-xl tracking-tight text-white leading-none">GlobiFree<span class="text-indigo-400">.Pro</span></h1>
-          <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-widest font-semibold">Live Streaming Engine</p>
+          <div class="flex items-center gap-2">
+            <h1 class="font-extrabold text-lg sm:text-xl tracking-tight text-white leading-none">
+              GlobiFree<span class="text-indigo-400">.Pro</span>
+            </h1>
+            <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+              Turbo v3
+            </span>
+          </div>
+          <p class="text-[10px] text-slate-400 mt-1 uppercase tracking-widest font-semibold">
+            Pre-Warmed Instant Download Engine
+          </p>
         </div>
+      </div>
+
+      <div class="hidden sm:flex items-center gap-4 text-xs text-slate-400">
+        <span class="flex items-center gap-1.5"><i class="fa-solid fa-bolt text-amber-400"></i> Instant Fetch</span>
+        <span class="flex items-center gap-1.5"><i class="fa-solid fa-shield-halved text-emerald-400"></i> Zero Watermark</span>
       </div>
     </div>
   </header>
 
-  <main class="max-w-4xl w-full mx-auto px-4 py-10 flex-grow flex flex-col items-center justify-center">
-    <div class="text-center mb-8">
-      <h2 class="text-3xl sm:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 tracking-tight mb-3">
-        Zero Wait. Instant Downloads.
+  <!-- Main Content -->
+  <main class="max-w-4xl w-full mx-auto px-4 py-8 flex-grow">
+    <!-- Hero Section -->
+    <div class="text-center mb-7">
+      <h2 class="text-3xl sm:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 tracking-tight mb-2.5">
+        Zero Wait. One-Touch Downloads.
       </h2>
-      <p class="text-sm sm:text-base text-slate-400 max-w-xl mx-auto">
-        Paste your link and watch the download start immediately in your browser.
+      <p class="text-xs sm:text-sm text-slate-400 max-w-xl mx-auto">
+        Paste your YouTube or Instagram link below. Our Turbo Engine pre-loads your stream in the background while you choose your settings!
       </p>
     </div>
 
-    <div class="glass-card rounded-2xl w-full p-6 sm:p-8 space-y-6">
-      <div class="flex flex-col sm:flex-row gap-3">
-        <div class="relative flex-grow flex items-center group">
-          <i class="fa-solid fa-link absolute left-4 text-slate-500 text-sm group-focus-within:text-indigo-400"></i>
-          <input type="text" id="mediaUrlInput" placeholder="Paste YouTube or Instagram link here..." class="w-full pl-12 pr-20 py-4 rounded-xl text-sm transition-all" />
-          <button type="button" id="pasteBtn" class="absolute right-3 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold">Paste</button>
-        </div>
-        <button type="button" id="fetchDetailsBtn" onclick="fetchMediaDetails()" class="btn-gradient-primary px-8 py-4 rounded-xl text-white font-bold text-sm flex items-center gap-2">
-          <i class="fa-solid fa-bolt"></i><span>Fetch</span>
-        </button>
-      </div>
+    <!-- Main Downloader Card -->
+    <div class="glass-card rounded-2xl p-5 sm:p-7 space-y-5">
 
-      <div id="mediaPreviewCard" class="hidden inner-box rounded-xl p-4 flex flex-col sm:flex-row items-center gap-5">
-        <div class="relative rounded-lg overflow-hidden border border-white/10 shrink-0 w-full sm:w-48 h-28 bg-black/50">
-           <img id="previewThumbnail" src="" class="w-full h-full object-cover" />
-           <div class="absolute bottom-2 right-2 bg-black/80 text-white text-[10px] font-bold px-2 py-1 rounded"><span id="previewDuration"></span></div>
+      <!-- Link Input Bar -->
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <label for="mediaUrlInput" class="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+            Paste Video, Short, or Reel Link
+          </label>
+          <span id="platformDetectBadge" class="hidden text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-red-500/15 border border-red-500/30 text-red-400 flex items-center gap-1.5">
+            <i class="fa-brands fa-youtube"></i>
+            <span id="platformDetectText">YouTube Detected</span>
+          </span>
         </div>
-        <div class="flex-grow w-full text-center sm:text-left">
-          <div class="flex justify-center sm:justify-start gap-2 mb-2">
-            <span id="previewPlatformTag" class="text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300">YOUTUBE</span>
+
+        <div class="flex flex-col sm:flex-row gap-2.5">
+          <div class="relative flex-grow flex items-center">
+            <i class="fa-solid fa-link absolute left-4 text-slate-500 text-sm pointer-events-none"></i>
+            <input
+              type="text"
+              id="mediaUrlInput"
+              placeholder="https://youtu.be/... or https://www.instagram.com/reel/..."
+              class="w-full pl-11 pr-20 py-3.5 rounded-xl text-sm placeholder-slate-500 transition"
+            />
+            <button
+              type="button"
+              id="pasteBtn"
+              class="absolute right-2.5 px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition"
+            >
+              Paste
+            </button>
           </div>
-          <h3 id="previewTitle" class="text-sm sm:text-base font-bold text-white truncate w-full">Media Title</h3>
+
+          <button
+            type="button"
+            id="fetchDetailsBtn"
+            onclick="fetchMediaDetails()"
+            class="btn-gradient-primary px-7 py-3.5 rounded-xl text-white font-bold text-sm flex items-center justify-center gap-2 shrink-0"
+          >
+            <i class="fa-solid fa-bolt"></i>
+            <span>Fetch Fast</span>
+          </button>
         </div>
       </div>
 
-      <div id="controlsContainer" class="hidden space-y-4">
-          <div class="inner-box rounded-xl p-5">
-            <div class="text-xs font-bold uppercase text-indigo-400 mb-4"><i class="fa-solid fa-video mr-2"></i>Video Download</div>
-            <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-              <div class="sm:col-span-5"><input type="text" id="videoFileName" class="w-full px-4 py-3 rounded-xl text-xs" /></div>
-              <div class="sm:col-span-2"><select id="videoFormatSelect" class="w-full px-3 py-3 rounded-xl text-xs"><option value="mp4">MP4</option></select></div>
-              <div class="sm:col-span-2">
-                <select id="videoQualitySelect" class="w-full px-3 py-3 rounded-xl text-xs">
-                  <option value="1080">1080p HD</option>
-                  <option value="720" selected>720p HD</option>
-                  <option value="480">480p</option>
-                </select>
-              </div>
-              <div class="sm:col-span-3">
-                <button type="button" id="downloadVideoBtn" onclick="triggerDownload('video')" class="btn-gradient-primary w-full py-3 rounded-xl text-white font-bold text-sm">
-                  <i class="fa-solid fa-download mr-1"></i> Download
-                </button>
-              </div>
+      <!-- Media Preview Card -->
+      <div id="mediaPreviewCard" class="hidden inner-box rounded-xl p-4 flex flex-col sm:flex-row items-center gap-4">
+        <div class="relative w-full sm:w-44 h-24 rounded-lg overflow-hidden border border-white/10 shrink-0 bg-slate-900">
+          <img id="previewThumbnail" src="" alt="Thumbnail" class="w-full h-full object-cover" />
+          <span id="previewDuration" class="absolute bottom-1.5 right-1.5 bg-black/80 text-white text-[10px] font-bold px-2 py-0.5 rounded">
+            HD Ready
+          </span>
+        </div>
+
+        <div class="flex-grow min-w-0 w-full text-center sm:text-left">
+          <div class="flex flex-wrap items-center justify-center sm:justify-start gap-2 mb-1.5">
+            <span id="previewPlatformTag" class="text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+              YOUTUBE
+            </span>
+            <span class="text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              MAX: 1080P HD
+            </span>
+            <span id="prewarmBadge" class="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+              <i class="fa-solid fa-bolt fa-beat"></i> Pre-loading 720p & MP3...
+            </span>
+          </div>
+          <h3 id="previewTitle" class="text-sm sm:text-base font-bold text-white truncate">
+            Media Title
+          </h3>
+          <p id="previewUploader" class="text-xs text-slate-400 truncate mt-0.5">
+            Creator Channel
+          </p>
+        </div>
+      </div>
+
+      <!-- Video Clip Trimmer (Optional) -->
+      <div class="inner-box rounded-xl p-4">
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <div class="w-9 h-9 rounded-lg bg-indigo-950/80 border border-indigo-800/60 flex items-center justify-center text-indigo-400 shrink-0">
+              <i class="fa-solid fa-scissors text-sm"></i>
+            </div>
+            <div>
+              <h4 class="text-xs sm:text-sm font-bold text-white">Video Clip Trimmer (Optional)</h4>
+              <p id="trimSubtext" class="text-[11px] text-slate-400">
+                Download full media by default, or cut a custom clip.
+              </p>
             </div>
           </div>
 
-          <div class="inner-box rounded-xl p-5">
-            <div class="text-xs font-bold uppercase text-pink-400 mb-4"><i class="fa-solid fa-music mr-2"></i>Audio Download</div>
-            <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-              <div class="sm:col-span-5"><input type="text" id="audioFileName" class="w-full px-4 py-3 rounded-xl text-xs" /></div>
-              <div class="sm:col-span-2"><select id="audioFormatSelect" class="w-full px-3 py-3 rounded-xl text-xs"><option value="mp3">MP3</option></select></div>
-              <div class="sm:col-span-2"><select id="audioQualitySelect" class="w-full px-3 py-3 rounded-xl text-xs"><option value="320">320k</option><option value="128">128k</option></select></div>
-              <div class="sm:col-span-3">
-                <button type="button" id="downloadAudioBtn" onclick="triggerDownload('audio')" class="btn-gradient-secondary w-full py-3 rounded-xl text-white font-bold text-sm">
-                  <i class="fa-solid fa-headphones mr-1"></i> Download
-                </button>
-              </div>
+          <button
+            type="button"
+            onclick="toggleTrimmerPanel()"
+            class="px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-indigo-300 border border-indigo-900/70 text-xs font-semibold flex items-center gap-1.5 transition shrink-0"
+          >
+            <i class="fa-solid fa-sliders"></i>
+            <span id="trimBtnLabel">Trim Clip</span>
+          </button>
+        </div>
+
+        <div id="trimmerPanel" class="hidden mt-4 pt-4 border-t border-slate-800/80 space-y-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Start Time (MM:SS)</label>
+              <input type="text" id="trimStartInput" placeholder="00:00" value="00:00" class="w-full px-3 py-2 rounded-lg text-xs" />
+            </div>
+            <div>
+              <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">End Time (MM:SS)</label>
+              <input type="text" id="trimEndInput" placeholder="00:30" value="00:30" class="w-full px-3 py-2 rounded-lg text-xs" />
             </div>
           </div>
+          <div class="flex items-center justify-end gap-2">
+            <button type="button" onclick="clearTrim()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium">
+              Reset
+            </button>
+            <button type="button" onclick="applyTrim()" class="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold">
+              Apply Trim
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div id="alertBox" class="hidden rounded-xl p-4 text-xs font-semibold border text-center"></div>
+      <!-- VIDEO DOWNLOAD BAR -->
+      <div class="inner-box rounded-xl p-4 sm:p-5 space-y-3.5">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-indigo-400">
+            <i class="fa-solid fa-video"></i>
+            <span>Video Download</span>
+          </div>
+
+          <label class="flex items-center gap-2 cursor-pointer select-none text-xs text-slate-300">
+            <input type="checkbox" id="muteVideoCheckbox" class="sr-only peer" />
+            <div class="w-8 h-4 bg-slate-700 rounded-full peer peer-checked:bg-rose-600 relative transition after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-3 after:h-3 after:bg-white after:rounded-full after:transition-all peer-checked:after:translate-x-4"></div>
+            <span class="text-[11px] text-slate-300">
+              <i class="fa-solid fa-volume-xmark text-rose-400 mr-1"></i>Mute Audio
+            </span>
+          </label>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+          <div class="sm:col-span-5">
+            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Video File Name</label>
+            <input type="text" id="videoFileName" placeholder="Custom video title..." class="w-full px-3.5 py-2.5 rounded-xl text-xs" />
+          </div>
+          <div class="sm:col-span-2">
+            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Format</label>
+            <select id="videoFormatSelect" class="w-full px-3 py-2.5 rounded-xl text-xs font-semibold">
+              <option value="mp4" selected>MP4</option>
+              <option value="webm">WEBM</option>
+            </select>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Quality</label>
+            <select id="videoQualitySelect" onchange="prewarmSelection('video')" class="w-full px-3 py-2.5 rounded-xl text-xs font-semibold">
+              <option value="1080">1080p HD</option>
+              <option value="720" selected>720p HD</option>
+              <option value="480">480p</option>
+              <option value="360">360p Fast</option>
+            </select>
+          </div>
+          <div class="sm:col-span-3">
+            <button
+              type="button"
+              id="downloadVideoBtn"
+              onclick="triggerDownload('video')"
+              class="btn-gradient-primary w-full py-2.5 px-4 rounded-xl text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <i class="fa-solid fa-download"></i>
+              <span>Download</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- AUDIO DOWNLOAD BAR -->
+      <div class="inner-box rounded-xl p-4 sm:p-5 space-y-3.5">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-pink-400">
+            <i class="fa-solid fa-music"></i>
+            <span>Audio Download</span>
+          </div>
+          <span class="text-[11px] text-slate-400">Studio-grade audio extraction</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+          <div class="sm:col-span-5">
+            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Audio File Name</label>
+            <input type="text" id="audioFileName" placeholder="Custom audio title..." class="w-full px-3.5 py-2.5 rounded-xl text-xs" />
+          </div>
+          <div class="sm:col-span-2">
+            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Format</label>
+            <select id="audioFormatSelect" onchange="prewarmSelection('audio')" class="w-full px-3 py-2.5 rounded-xl text-xs font-semibold">
+              <option value="mp3" selected>MP3</option>
+              <option value="m4a">M4A</option>
+              <option value="wav">WAV</option>
+            </select>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Bitrate</label>
+            <select id="audioQualitySelect" class="w-full px-3 py-2.5 rounded-xl text-xs font-semibold">
+              <option value="320" selected>320kbps</option>
+              <option value="192">192kbps</option>
+              <option value="128">128kbps</option>
+            </select>
+          </div>
+          <div class="sm:col-span-3">
+            <button
+              type="button"
+              id="downloadAudioBtn"
+              onclick="triggerDownload('audio')"
+              class="btn-gradient-secondary w-full py-2.5 px-4 rounded-xl text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <i class="fa-solid fa-headphones"></i>
+              <span>Download</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Progress Section -->
+      <div id="progressSection" class="hidden inner-box rounded-xl p-4 space-y-2">
+        <div class="flex items-center justify-between text-xs text-slate-200">
+          <span id="statusText"><i class="fa-solid fa-bolt fa-beat text-amber-400 mr-1"></i> Connecting to Turbo CDN...</span>
+          <span id="progressPercent" class="font-bold text-indigo-400">25%</span>
+        </div>
+        <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+          <div id="progressBar" class="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 w-[25%] transition-all duration-300"></div>
+        </div>
+      </div>
+
+      <!-- Alert Box -->
+      <div id="alertBox" class="hidden rounded-xl p-4 text-xs sm:text-sm font-medium border text-center"></div>
+
+    </div>
+
+    <!-- Recent Downloads History -->
+    <div id="historySection" class="hidden mt-6 glass-card rounded-2xl p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">
+          <i class="fa-solid fa-clock-rotate-left text-indigo-400 mr-1.5"></i> Recent Downloads
+        </h3>
+        <button onclick="clearHistory()" class="text-[11px] text-slate-500 hover:text-slate-300">Clear</button>
+      </div>
+      <div id="historyList" class="space-y-2"></div>
+    </div>
+
+    <!-- Pro Feature Highlights -->
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
+      <div class="inner-box rounded-xl p-4 flex items-start gap-3">
+        <div class="w-8 h-8 rounded-lg bg-indigo-500/15 text-indigo-400 flex items-center justify-center shrink-0 mt-0.5">
+          <i class="fa-solid fa-bolt"></i>
+        </div>
+        <div>
+          <h4 class="text-xs font-bold text-white">Pre-Warm Turbo Engine</h4>
+          <p class="text-[11px] text-slate-400 mt-0.5">Streams start preparing the moment you fetch a link for instant 1-click saving.</p>
+        </div>
+      </div>
+      <div class="inner-box rounded-xl p-4 flex items-start gap-3">
+        <div class="w-8 h-8 rounded-lg bg-pink-500/15 text-pink-400 flex items-center justify-center shrink-0 mt-0.5">
+          <i class="fa-solid fa-film"></i>
+        </div>
+        <div>
+          <h4 class="text-xs font-bold text-white">1080p HD & 320kbps MP3</h4>
+          <p class="text-[11px] text-slate-400 mt-0.5">Crystal-clear video and studio-grade audio tracks with zero watermarks.</p>
+        </div>
+      </div>
+      <div class="inner-box rounded-xl p-4 flex items-start gap-3">
+        <div class="w-8 h-8 rounded-lg bg-emerald-500/15 text-emerald-400 flex items-center justify-center shrink-0 mt-0.5">
+          <i class="fa-brands fa-chrome"></i>
+        </div>
+        <div>
+          <h4 class="text-xs font-bold text-white">Direct Browser Download</h4>
+          <p class="text-[11px] text-slate-400 mt-0.5">Files download directly through your browser's native high-speed manager.</p>
+        </div>
+      </div>
     </div>
   </main>
 
-  <footer class="w-full py-6 text-center text-[11px] font-semibold text-slate-500 uppercase tracking-widest border-t border-white/5">
-    &copy; 2026 GlobiFree Pro — Instant Client-Side Engine
+  <footer class="w-full py-5 text-center text-[11px] font-semibold text-slate-500 uppercase tracking-widest border-t border-white/5">
+    &copy; 2026 GlobiFree.Pro — High-Speed Media Engine
   </footer>
 
   <script>
     const API_BASE = '';
-    const mediaUrlInput = document.getElementById('mediaUrlInput');
-    const alertBox = document.getElementById('alertBox');
 
-    document.getElementById('pasteBtn').addEventListener('click', async () => {
-      try { mediaUrlInput.value = (await navigator.clipboard.readText()).trim(); fetchMediaDetails(); } 
-      catch (e) { showAlert('Clipboard access denied.', true); }
+    const mediaUrlInput = document.getElementById('mediaUrlInput');
+    const pasteBtn = document.getElementById('pasteBtn');
+    const fetchDetailsBtn = document.getElementById('fetchDetailsBtn');
+    const platformDetectBadge = document.getElementById('platformDetectBadge');
+
+    const mediaPreviewCard = document.getElementById('mediaPreviewCard');
+    const previewThumbnail = document.getElementById('previewThumbnail');
+    const previewPlatformTag = document.getElementById('previewPlatformTag');
+    const previewDuration = document.getElementById('previewDuration');
+    const previewTitle = document.getElementById('previewTitle');
+    const previewUploader = document.getElementById('previewUploader');
+    const prewarmBadge = document.getElementById('prewarmBadge');
+
+    const videoFormatSelect = document.getElementById('videoFormatSelect');
+    const audioFormatSelect = document.getElementById('audioFormatSelect');
+    const videoQualitySelect = document.getElementById('videoQualitySelect');
+    const audioQualitySelect = document.getElementById('audioQualitySelect');
+    const videoFileName = document.getElementById('videoFileName');
+    const audioFileName = document.getElementById('audioFileName');
+    const muteVideoCheckbox = document.getElementById('muteVideoCheckbox');
+
+    const alertBox = document.getElementById('alertBox');
+    const progressSection = document.getElementById('progressSection');
+    const progressBar = document.getElementById('progressBar');
+    const progressPercent = document.getElementById('progressPercent');
+    const statusText = document.getElementById('statusText');
+
+    const downloadVideoBtn = document.getElementById('downloadVideoBtn');
+    const downloadAudioBtn = document.getElementById('downloadAudioBtn');
+
+    let isTrimActive = false;
+    let savedStartSeconds = null;
+    let savedEndSeconds = null;
+
+    mediaUrlInput.addEventListener('input', updatePlatformBadge);
+
+    function updatePlatformBadge() {
+      const val = mediaUrlInput.value.trim().toLowerCase();
+      if (val.includes('youtube.com') || val.includes('youtu.be')) {
+        platformDetectBadge.className = 'text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-red-500/15 border border-red-500/30 text-red-400 flex items-center gap-1.5';
+        platformDetectBadge.innerHTML = '<i class="fa-brands fa-youtube"></i> <span>YouTube Detected</span>';
+      } else if (val.includes('instagram.com')) {
+        platformDetectBadge.className = 'text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-pink-500/15 border border-pink-500/30 text-pink-400 flex items-center gap-1.5';
+        platformDetectBadge.innerHTML = '<i class="fa-brands fa-instagram"></i> <span>Instagram Detected</span>';
+      } else {
+        platformDetectBadge.classList.add('hidden');
+      }
+    }
+
+    pasteBtn.addEventListener('click', async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+          mediaUrlInput.value = text.trim();
+          updatePlatformBadge();
+          fetchMediaDetails();
+        }
+      } catch (err) {
+        showAlert('Clipboard permission denied. Please paste manually (Ctrl+V).', true);
+      }
     });
 
-    function showAlert(msg, isError) {
-      alertBox.className = `rounded-xl p-4 text-xs font-semibold border text-center ${isError ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'}`;
-      alertBox.innerHTML = msg;
+    function showAlert(message, isError = true) {
+      alertBox.className = `rounded-xl p-4 text-xs sm:text-sm font-medium border text-center ${
+        isError
+          ? 'bg-red-950/50 border-red-800 text-red-300'
+          : 'bg-emerald-950/50 border-emerald-800 text-emerald-300'
+      }`;
+      alertBox.innerHTML = message;
       alertBox.classList.remove('hidden');
-      if (!isError) setTimeout(() => alertBox.classList.add('hidden'), 4000);
     }
 
-    async function fetchMediaDetails() {
+    function secondsToTime(sec) {
+      const s = Math.max(0, Math.floor(Number(sec) || 0));
+      const hrs = Math.floor(s / 3600);
+      const mins = Math.floor((s % 3600) / 60);
+      const secs = s % 60;
+      if (hrs > 0) {
+        return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+      }
+      return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+
+    function parseTimeToSeconds(str) {
+      const clean = String(str || '').trim();
+      if (!clean) return 0;
+      if (/^\d+$/.test(clean)) return parseInt(clean, 10);
+      const parts = clean.split(':').map(Number);
+      if (parts.some(isNaN)) return null;
+      if (parts.length === 2) return parts[0] * 60 + parts[1];
+      if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+      return null;
+    }
+
+    function toggleTrimmerPanel() {
+      document.getElementById('trimmerPanel').classList.toggle('hidden');
+    }
+
+    function applyTrim() {
+      const startSec = parseTimeToSeconds(document.getElementById('trimStartInput').value);
+      const endSec = parseTimeToSeconds(document.getElementById('trimEndInput').value);
+
+      if (startSec === null || endSec === null || endSec <= startSec) {
+        return showAlert('End time must be greater than start time.', true);
+      }
+      if (endSec - startSec > 180) {
+        return showAlert('Maximum custom clip length is 3 minutes (180s).', true);
+      }
+
+      isTrimActive = true;
+      savedStartSeconds = startSec;
+      savedEndSeconds = endSec;
+
+      document.getElementById('trimSubtext').textContent = `Custom clip active: ${secondsToTime(startSec)} to ${secondsToTime(endSec)}`;
+      document.getElementById('trimBtnLabel').textContent = `Trimmed (${secondsToTime(startSec)}-${secondsToTime(endSec)})`;
+      document.getElementById('trimmerPanel').classList.add('hidden');
+      showAlert(`Clip trim set: ${secondsToTime(startSec)} – ${secondsToTime(endSec)}`, false);
+    }
+
+    function clearTrim() {
+      isTrimActive = false;
+      savedStartSeconds = null;
+      savedEndSeconds = null;
+      document.getElementById('trimSubtext').textContent = 'Download full media by default, or cut a custom clip.';
+      document.getElementById('trimBtnLabel').textContent = 'Trim Clip';
+      document.getElementById('trimmerPanel').classList.add('hidden');
+    }
+
+    // Background Pre-warm when user changes quality dropdown
+    function prewarmSelection(mode) {
       const url = mediaUrlInput.value.trim();
       if (!url) return;
-      document.getElementById('fetchDetailsBtn').innerHTML = '<i class="fa-solid fa-circle-notch spin-fast"></i> Fetching...';
-      
+      const formData = new FormData();
+      formData.append('url', url);
+      formData.append('mode', mode);
+      formData.append('format_type', mode === 'video' ? videoFormatSelect.value : audioFormatSelect.value);
+      formData.append('quality', mode === 'video' ? videoQualitySelect.value : audioQualitySelect.value);
+      fetch(`${API_BASE}/api/prewarm`, { method: 'POST', body: formData }).catch(() => {});
+    }
+
+    // 0.2s Instant Fetch + Background Pre-Warm Indicator
+    async function fetchMediaDetails() {
+      const url = mediaUrlInput.value.trim();
+      if (!url) return showAlert('Please paste a YouTube or Instagram link first.', true);
+
+      alertBox.classList.add('hidden');
+      fetchDetailsBtn.disabled = true;
+      fetchDetailsBtn.innerHTML = '<i class="fa-solid fa-circle-notch spin-fast"></i> <span>Fetching...</span>';
+
       try {
-        let res = await fetch(`${API_BASE}/api/info`, { method: 'POST', body: new URLSearchParams({url}) });
-        if (!res.ok) res = await fetch(`${API_BASE}/api/info?url=${encodeURIComponent(url)}`);
+        const formData = new FormData();
+        formData.append('url', url);
+
+        let res = await fetch(`${API_BASE}/api/info`, { method: 'POST', body: formData });
+        if (!res.ok) {
+          res = await fetch(`${API_BASE}/api/info?url=${encodeURIComponent(url)}`);
+        }
+        if (!res.ok) throw new Error('Could not fetch media details. Please check the link.');
+
         const data = await res.json();
-        
-        document.getElementById('previewThumbnail').src = data.thumbnail || '';
-        document.getElementById('previewPlatformTag').textContent = data.platform || 'MEDIA';
-        document.getElementById('previewDuration').textContent = data.duration_string || '';
-        document.getElementById('previewTitle').textContent = data.title || 'Media';
-        document.getElementById('videoFileName').value = data.title || '';
-        document.getElementById('audioFileName').value = data.title || '';
-        
-        document.getElementById('mediaPreviewCard').classList.remove('hidden');
-        document.getElementById('controlsContainer').classList.remove('hidden');
-        alertBox.classList.add('hidden');
+
+        previewThumbnail.src = data.thumbnail || 'https://placehold.co/320x180/0f172a/6366f1?text=GlobiFree';
+        previewPlatformTag.textContent = (data.platform || 'MEDIA').toUpperCase();
+        previewDuration.textContent = data.duration_string || 'HD Ready';
+        previewTitle.textContent = data.title || 'GlobiFree Media';
+        previewUploader.textContent = data.uploader || 'Creator';
+
+        if (data.title) {
+          videoFileName.value = data.title;
+          audioFileName.value = data.title;
+        }
+
+        mediaPreviewCard.classList.remove('hidden');
+
+        // Update Prewarm Badge to Ready after 2.5s
+        prewarmBadge.className = 'text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1';
+        prewarmBadge.innerHTML = '<i class="fa-solid fa-bolt fa-beat"></i> Pre-loading stream...';
+        setTimeout(() => {
+          prewarmBadge.className = 'text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1';
+          prewarmBadge.innerHTML = '<i class="fa-solid fa-check"></i> Turbo Stream Ready';
+        }, 2500);
+
       } catch (err) {
-        showAlert('Could not fetch details. Please check the URL.', true);
+        showAlert(err.message, true);
       } finally {
-        document.getElementById('fetchDetailsBtn').innerHTML = '<i class="fa-solid fa-bolt"></i> Fetch Fast';
+        fetchDetailsBtn.disabled = false;
+        fetchDetailsBtn.innerHTML = '<i class="fa-solid fa-bolt"></i> <span>Fetch Fast</span>';
       }
     }
 
-    // Completely client-side execution to bypass Server Blocking!
+    function startChromeNativeDownload(downloadUrl, filename) {
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.setAttribute('download', filename || '');
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      saveToHistory(filename, downloadUrl);
+    }
+
     async function triggerDownload(mode) {
       const url = mediaUrlInput.value.trim();
-      const quality = mode === 'video' ? document.getElementById('videoQualitySelect').value : null;
-      const btn = mode === 'video' ? document.getElementById('downloadVideoBtn') : document.getElementById('downloadAudioBtn');
-      const oldHtml = btn.innerHTML;
-      
+      if (!url) return showAlert('Please paste a YouTube or Instagram URL first.', true);
+
+      const isVideo = mode === 'video';
+      const formatType = isVideo ? videoFormatSelect.value : audioFormatSelect.value;
+      const quality = isVideo ? videoQualitySelect.value : audioQualitySelect.value;
+      const customTitle = isVideo ? videoFileName.value.trim() : audioFileName.value.trim();
+      const muteVideo = isVideo && muteVideoCheckbox.checked ? 'true' : 'false';
+
       alertBox.classList.add('hidden');
-      btn.innerHTML = '<i class="fa-solid fa-circle-notch spin-fast"></i> Processing...';
-      btn.disabled = true;
+      downloadVideoBtn.disabled = true;
+      downloadAudioBtn.disabled = true;
+      progressSection.classList.remove('hidden');
+
+      progressBar.style.width = '30%';
+      progressPercent.textContent = '30%';
+      statusText.innerHTML = `<i class="fa-solid fa-bolt fa-beat text-amber-400 mr-1"></i> Fetching high-speed Chrome link (${isVideo ? quality + 'p ' + formatType.toUpperCase() : formatType.toUpperCase() + ' Audio'})...`;
 
       try {
-        const payload = {
-            url: url,
-            vQuality: quality || "720",
-            isAudioOnly: mode === 'audio',
-            filenamePattern: "basic"
-        };
-        
-        // Use Cobalt API directly from the browser (Uses the User's IP, avoids Render IP ban)
-        const cobaltRes = await fetch("https://api.cobalt.tools/api/json", {
-            method: "POST",
-            headers: {
-                "Accept": "application/json",
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify(payload)
+        const formData = new FormData();
+        formData.append('url', url);
+        formData.append('mode', mode);
+        formData.append('format_type', formatType);
+        formData.append('quality', quality);
+        formData.append('mute_video', muteVideo);
+        if (customTitle) formData.append('custom_title', customTitle);
+
+        if (isTrimActive && savedStartSeconds !== null && savedEndSeconds !== null) {
+          formData.append('start_time', secondsToTime(savedStartSeconds));
+          formData.append('end_time', secondsToTime(savedEndSeconds));
+        }
+
+        const response = await fetch(`${API_BASE}/api/prepare`, {
+          method: 'POST',
+          body: formData
         });
 
-        if (!cobaltRes.ok) throw new Error("Could not process video. Service might be busy.");
-        const data = await cobaltRes.json();
-        
-        if (data.status === "error" || !data.url) throw new Error("Video is not supported or blocked.");
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.detail || 'Could not prepare download link.');
+        }
 
-        showAlert('<i class="fa-solid fa-check"></i> Download starting in Chrome!', false);
-        window.location.href = data.url;
+        let data = await response.json();
+
+        // If job is still converting (for longer videos), poll smoothly until ready!
+        while (data.status === 'processing' && data.job_id) {
+          const pct = data.progress || 50;
+          progressBar.style.width = `${pct}%`;
+          progressPercent.textContent = `${pct}%`;
+          statusText.innerHTML = `<i class="fa-solid fa-circle-notch spin-fast text-indigo-400 mr-1"></i> Preparing HD stream on cloud (${pct}%)...`;
+
+          await new Promise(r => setTimeout(r, 700));
+
+          const pollRes = await fetch(
+            `${API_BASE}/api/job_status?job_id=${encodeURIComponent(data.job_id)}&filename=${encodeURIComponent(data.filename || '')}`
+          );
+          if (!pollRes.ok) {
+            const errData = await pollRes.json().catch(() => ({}));
+            throw new Error(errData.detail || 'Cloud stream conversion failed.');
+          }
+          data = await pollRes.json();
+        }
+
+        if (!data.download_url) {
+          throw new Error('Could not generate direct download link.');
+        }
+
+        progressBar.style.width = '100%';
+        progressPercent.textContent = '100%';
+        statusText.innerHTML = '<i class="fa-solid fa-check text-emerald-400 mr-1"></i> Download started in Chrome! Check your browser downloads (Ctrl+J).';
+
+        startChromeNativeDownload(data.download_url, data.filename);
+        showAlert('<i class="fa-solid fa-circle-check mr-1.5"></i> Download started in Chrome! Check your downloads bar (Ctrl+J).', false);
+
       } catch (err) {
-        showAlert('Download failed to start.', true);
+        progressSection.classList.add('hidden');
+        showAlert(err.message, true);
       } finally {
-        btn.innerHTML = oldHtml;
-        btn.disabled = false;
+        downloadVideoBtn.disabled = false;
+        downloadAudioBtn.disabled = false;
       }
     }
+
+    function saveToHistory(filename, downloadUrl) {
+      try {
+        const item = { filename: filename || 'GlobiFree_Media', url: downloadUrl, time: new Date().toLocaleTimeString() };
+        const list = JSON.parse(localStorage.getItem('globifree_history') || '[]');
+        list.unshift(item);
+        localStorage.setItem('globifree_history', JSON.stringify(list.slice(0, 5)));
+        renderHistory();
+      } catch (e) {}
+    }
+
+    function renderHistory() {
+      try {
+        const list = JSON.parse(localStorage.getItem('globifree_history') || '[]');
+        const section = document.getElementById('historySection');
+        const container = document.getElementById('historyList');
+        if (!list.length) {
+          section.classList.add('hidden');
+          return;
+        }
+        section.classList.remove('hidden');
+        container.innerHTML = list.map(item => `
+          <div class="inner-box rounded-lg px-3.5 py-2.5 flex items-center justify-between gap-3 text-xs">
+            <span class="truncate text-slate-200 font-medium">${item.filename}</span>
+            <a href="${item.url}" download="${item.filename}" class="text-indigo-400 hover:text-indigo-300 font-semibold shrink-0">
+              <i class="fa-solid fa-download mr-1"></i>Save Again
+            </a>
+          </div>
+        `).join('');
+      } catch (e) {}
+    }
+
+    function clearHistory() {
+      localStorage.removeItem('globifree_history');
+      renderHistory();
+    }
+
+    renderHistory();
   </script>
 </body>
 </html>
