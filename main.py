@@ -276,74 +276,90 @@ def _fetch_cdn_for_format(clean_url: str, vid_id: Optional[str], cloud_fmt: str,
                 return cached.get("url")
 
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Referer": "https://ddownr.com/",
             "Origin": "https://ddownr.com",
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "X-Requested-With": "XMLHttpRequest",
         }
 
-        api_hosts = ["https://p.oceansaver.in", "https://p.savenow.to"]
+        # Only use the canonical host — savenow.to is unreliable/dead
+        hosts = ["https://p.oceansaver.in"]
 
-        for host in api_hosts:
-            for _attempt in range(2):
+        for host in hosts:
+            # Use a Session so cookies persist across init + progress
+            session = cffi_requests.Session(impersonate="chrome")
+            try:
+                # 1) init
+                params = {
+                    "button": "1",
+                    "start": "1",
+                    "end": "1",
+                    "format": cloud_fmt,
+                    "iframe_source": "https://ddownr.com/",
+                    "url": clean_url,
+                }
+                init_resp = session.get(
+                    f"{host}/ajax/download.php",
+                    params=params,
+                    headers=headers,
+                    timeout=10,
+                )
+                if init_resp.status_code != 200:
+                    continue
+
                 try:
-                    params = {
-                        "button": "1",
-                        "start": "1",
-                        "end": "1",
-                        "format": cloud_fmt,
-                        "iframe_source": "https://ddownr.com/",
-                        "url": clean_url,
-                    }
-                    init_resp = cffi_requests.get(
-                        f"{host}/ajax/download.php",
-                        params=params,
-                        headers=headers,
-                        impersonate="chrome",
-                        timeout=8,
-                    )
-                    if init_resp.status_code != 200:
-                        continue
-
                     init_data = init_resp.json()
-                    cdn_job_id = init_data.get("id")
-                    if not cdn_job_id:
-                        continue
-
-                    progress_urls = [
-                        init_data.get("progress_url"),
-                        f"https://p.oceansaver.in/ajax/progress.php?id={cdn_job_id}",
-                        f"https://p.savenow.to/ajax/progress.php?id={cdn_job_id}",
-                    ]
-                    progress_urls = list(dict.fromkeys([u for u in progress_urls if u]))
-
-                    # Increased polling attempts to 75 (~35 seconds) so heavy videos never timeout!
-                    for step in range(75):
-                        time.sleep(0.5)
-                        for p_url in progress_urls:
-                            try:
-                                p_resp = cffi_requests.get(
-                                    p_url, headers=headers, impersonate="chrome", timeout=5
-                                )
-                                if p_resp.status_code == 200:
-                                    p_data = p_resp.json()
-                                    dl_url = p_data.get("download_url")
-                                    if dl_url and (
-                                        p_data.get("success") == 1
-                                        or p_data.get("progress") == 1000
-                                        or str(dl_url).startswith("http")
-                                    ):
-                                        with CACHE_LOCK:
-                                            PREWARM_CACHE[cache_key] = {"url": dl_url, "ts": time.time()}
-                                        return dl_url
-
-                                    raw_prog = p_data.get("progress")
-                                    if job_id and isinstance(raw_prog, (int, float)) and raw_prog > 0:
-                                        mapped_pct = min(92, max(40, 40 + int((raw_prog / 1000.0) * 52)))
-                                        update_job(job_id, progress=mapped_pct)
-                            except Exception:
-                                continue
                 except Exception:
                     continue
+
+                cdn_job_id = init_data.get("id")
+                if not cdn_job_id:
+                    continue
+
+                # 2) poll progress on the SAME host that created the job
+                progress_url = (
+                    init_data.get("progress_url")
+                    or f"{host}/ajax/progress.php?id={cdn_job_id}"
+                )
+
+                # Fail-fast: ~20s max per format
+                for _ in range(40):
+                    time.sleep(0.5)
+                    try:
+                        p_resp = session.get(
+                            progress_url, headers=headers, timeout=5
+                        )
+                        if p_resp.status_code != 200:
+                            continue
+                        p_data = p_resp.json()
+                    except Exception:
+                        continue
+
+                    dl_url = p_data.get("download_url")
+                    if dl_url and str(dl_url).startswith("http"):
+                        with CACHE_LOCK:
+                            PREWARM_CACHE[cache_key] = {
+                                "url": dl_url,
+                                "ts": time.time(),
+                            }
+                        return dl_url
+
+                    raw_prog = p_data.get("progress")
+                    if job_id and isinstance(raw_prog, (int, float)) and raw_prog > 0:
+                        mapped_pct = min(92, max(40, 40 + int((raw_prog / 1000.0) * 52)))
+                        update_job(job_id, progress=mapped_pct)
+
+                    if p_data.get("success") == 0 and p_data.get("progress", 0) >= 1000:
+                        break
+            except Exception:
+                continue
+            finally:
+                try:
+                    session.close()
+                except Exception:
+                    pass
 
     return None
 
@@ -535,14 +551,41 @@ def process_download_job(
 
         if is_yt:
             direct_cdn_url = get_cloud_cdn_direct_link(url, mode, format_type, quality, job_id=job_id)
+            
+            # --- FIX: FALLBACK TO YT-DLP IF CDN FAILS ---
             if not direct_cdn_url:
-                cleanup_dir(job_dir)
+                update_job(job_id, progress=45)
+                try:
+                    downloaded_file = run_universal_platform_download(
+                        url, job_dir, mode, format_type, quality, is_muted and not has_trim
+                    )
+                except Exception as e:
+                    cleanup_dir(job_dir)
+                    update_job(
+                        job_id,
+                        status="error",
+                        error="YouTube extraction failed. The video may be age-restricted, private, or temporarily unavailable. Please try again.",
+                    )
+                    return
+
+                if has_trim:
+                    trimmed_out = job_dir / f"trimmed_output.{format_type}"
+                    downloaded_file = cut_media_segment_exact(
+                        str(downloaded_file), trimmed_out, start_sec, end_sec, mode, format_type, quality, is_muted
+                    )
+
+                final_ext = downloaded_file.suffix.lstrip(".") or format_type
+                local_filename = f"{safe_header_title}.{final_ext}"
+
                 update_job(
                     job_id,
-                    status="error",
-                    error="YouTube Cloud stream is busy right now. Please click Download once more!",
+                    status="ready",
+                    progress=100,
+                    download_url=f"/api/stream/{job_id}?filename={quote(local_filename)}",
+                    filename=local_filename,
                 )
                 return
+            # --- END FALLBACK ---
 
             if not has_trim and not is_muted:
                 cleanup_dir(job_dir)
@@ -557,11 +600,13 @@ def process_download_job(
 
             update_job(job_id, progress=90)
             out_path = job_dir / f"final_output.{format_type}"
+            
             if has_trim:
                 cut_media_segment_exact(
                     direct_cdn_url, out_path, start_sec, end_sec, mode, format_type, quality, is_muted
                 )
-            else:
+            elif is_muted and mode == "video":
+                # ONLY strip audio if they explicitly want a muted video
                 subprocess.run(
                     [
                         "ffmpeg", "-y",
@@ -572,6 +617,10 @@ def process_download_job(
                     check=True,
                     timeout=60,
                 )
+            else:
+                # Should not be reached, but safeguard
+                return
+
             update_job(
                 job_id,
                 status="ready",
