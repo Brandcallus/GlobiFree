@@ -348,7 +348,7 @@ def cut_media_segment_exact(
 
 
 # =====================================================================
-# 3. YOUTUBE 3-LAYER TRIPLE ENGINE (Cloud CDN -> Pytubefix -> yt-dlp)
+# 3. CLOUD CDN DIRECT LINK GENERATOR (YOUTUBE FALLBACK)
 # =====================================================================
 def get_cloud_cdn_direct_link(
     url: str,
@@ -431,89 +431,8 @@ def get_cloud_cdn_direct_link(
     return None
 
 
-def download_youtube_with_pytubefix(
-    url: str,
-    job_dir: Path,
-    mode: str,
-    format_type: str,
-    quality: str,
-    is_muted: bool,
-) -> Path:
-    from pytubefix import YouTube
-
-    vid_id = extract_youtube_id(url)
-    clean_url = f"https://www.youtube.com/watch?v={vid_id}" if vid_id else url
-    yt = YouTube(clean_url, use_po_token=True)
-
-    if mode == "audio":
-        audio_stream = yt.streams.filter(only_audio=True).order_by("abr").desc().first()
-        if not audio_stream:
-            raise RuntimeError("No audio stream found via pytubefix")
-        raw_audio = Path(audio_stream.download(output_path=str(job_dir), filename="raw_audio.m4a"))
-        out_audio = job_dir / f"final_media.{format_type}"
-        if format_type == "m4a":
-            raw_audio.rename(out_audio)
-            return out_audio
-        bitrate = f"{quality}k" if str(quality).isdigit() else "192k"
-        cmd = ["ffmpeg", "-y", "-i", str(raw_audio), "-vn"]
-        if format_type == "mp3":
-            cmd += ["-c:a", "libmp3lame", "-b:a", bitrate]
-        elif format_type == "wav":
-            cmd += ["-c:a", "pcm_s16le"]
-        cmd.append(str(out_audio))
-        subprocess.run(cmd, check=True, timeout=90)
-        return out_audio
-
-    target_res = f"{quality}p"
-    prog_stream = (
-        yt.streams.filter(progressive=True, file_extension="mp4", res=target_res).first()
-        or yt.streams.filter(progressive=True, file_extension="mp4").order_by("resolution").desc().first()
-    )
-
-    if (quality == "1080" or is_muted) or not prog_stream:
-        vid_stream = (
-            yt.streams.filter(adaptive=True, only_video=True, file_extension="mp4", res=target_res).first()
-            or yt.streams.filter(adaptive=True, only_video=True, file_extension="mp4").order_by("resolution").desc().first()
-            or prog_stream
-        )
-        if not vid_stream:
-            raise RuntimeError("No video stream found via pytubefix")
-
-        raw_vid = Path(vid_stream.download(output_path=str(job_dir), filename="raw_video.mp4"))
-        out_vid = job_dir / f"final_media.{format_type}"
-
-        if is_muted or vid_stream.is_progressive:
-            if is_muted and vid_stream.is_progressive:
-                subprocess.run(["ffmpeg", "-y", "-i", str(raw_vid), "-an", "-c:v", "copy", str(out_vid)], check=True, timeout=60)
-                return out_vid
-            raw_vid.rename(out_vid)
-            return out_vid
-
-        aud_stream = yt.streams.filter(only_audio=True).order_by("abr").desc().first()
-        if aud_stream:
-            raw_aud = Path(aud_stream.download(output_path=str(job_dir), filename="raw_audio.m4a"))
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", str(raw_vid), "-i", str(raw_aud), "-c:v", "copy", "-c:a", "aac", str(out_vid)],
-                check=True,
-                timeout=90,
-            )
-            return out_vid
-
-    if not prog_stream:
-        raise RuntimeError("No playable YouTube stream found")
-
-    raw_file = Path(prog_stream.download(output_path=str(job_dir), filename="raw_prog.mp4"))
-    out_file = job_dir / f"final_media.{format_type}"
-    if is_muted:
-        subprocess.run(["ffmpeg", "-y", "-i", str(raw_file), "-an", "-c:v", "copy", str(out_file)], check=True, timeout=60)
-        return out_file
-
-    raw_file.rename(out_file)
-    return out_file
-
-
 # =====================================================================
-# 4. UNIVERSAL PLATFORM DOWNLOAD (Instagram, Pinterest, X, FB, Reddit, YT Fallback)
+# 4. UNIVERSAL PLATFORM DOWNLOAD (yt-dlp Core)
 # =====================================================================
 def run_universal_platform_download(
     url: str,
@@ -535,8 +454,11 @@ def run_universal_platform_download(
         "--concurrent-fragments", "8",
         "-o", raw_template,
     ]
+    
+    # Is extractor argument ki wajah se issue ho raha tha, maine isse purane working wale se badal diya hai
     if is_yt:
-         base_cmd += ["--extractor-args", "youtube:player_client=default,ios,android"]
+         base_cmd += ["--extractor-args", "youtube:player_client=android,web"]
+         
     if COOKIES_FILE.exists():
         base_cmd += ["--cookies", str(COOKIES_FILE)]
 
@@ -611,6 +533,7 @@ def process_download_job(
 
         # ------------------- YOUTUBE FLOW -------------------
         if is_yt:
+            # 1. Pehle hamesha aapka Cloud CDN Direct Link try karega (jo properly chal raha tha)
             direct_cdn_url = get_cloud_cdn_direct_link(url, mode, format_type, quality)
             if direct_cdn_url:
                 if not has_trim and not is_muted:
@@ -653,17 +576,11 @@ def process_download_job(
                 except Exception:
                     pass
 
-            downloaded_file = None
-            try:
-                update_job(job_id, progress=60)
-                downloaded_file = download_youtube_with_pytubefix(
-                    url, job_dir, mode, format_type, quality, is_muted and not has_trim
-                )
-            except Exception:
-                update_job(job_id, progress=75)
-                downloaded_file = run_universal_platform_download(
-                    url, job_dir, mode, format_type, quality, is_muted and not has_trim, is_yt=True
-                )
+            # 2. Agar Cloud CDN fail hua toh seedha purana yt-dlp flow (jo kaam kar raha tha)
+            update_job(job_id, progress=75)
+            downloaded_file = run_universal_platform_download(
+                url, job_dir, mode, format_type, quality, is_muted and not has_trim, is_yt=True
+            )
 
             if has_trim:
                 update_job(job_id, progress=90)
