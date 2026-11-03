@@ -63,7 +63,6 @@ def cleanup_dir(path: Path):
 
 
 def cleanup_old_temp_files(max_age_sec: int = 900):
-    """Deletes temp folders and jobs older than 15 minutes to prevent server crash."""
     now = time.time()
     try:
         for item in TEMP_DIR.iterdir():
@@ -174,7 +173,6 @@ def fast_fetch_info(url: str) -> dict:
         if cached_info and (time.time() - cached_info.get("_ts", 0) < 1800):
             return {k: v for k, v in cached_info.items() if k != "_ts"}
 
-    # Layer 1: Fast OEmbed for YouTube
     if is_yt:
         clean_yt_url = f"https://www.youtube.com/watch?v={vid_id}" if vid_id else url
         oembed_urls = [
@@ -211,10 +209,9 @@ def fast_fetch_info(url: str) -> dict:
             except Exception:
                 pass
 
-        # Layer 2: Pytubefix Metadata Fallback for YouTube
         try:
             from pytubefix import YouTube
-            yt = YouTube(clean_yt_url)
+            yt = YouTube(clean_yt_url, use_po_token=True)
             duration = yt.length or 0
             thumb = f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg" if vid_id else yt.thumbnail_url
             result = {
@@ -233,7 +230,6 @@ def fast_fetch_info(url: str) -> dict:
         except Exception:
             pass
 
-    # Layer 3: Universal yt-dlp Metadata (Without crashing --impersonate flag)
     cmd = [
         "yt-dlp",
         "--dump-json",
@@ -268,7 +264,6 @@ def fast_fetch_info(url: str) -> dict:
     except Exception:
         pass
 
-    # Layer 4: Safe Fallback (Never block user from clicking download)
     fallback_thumb = f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg" if vid_id else ""
     return {
         "title": f"{platform.title()} Media_{int(time.time()) % 10000}",
@@ -336,7 +331,6 @@ def cut_media_segment_exact(
     if proc.returncode == 0 and out_file.exists() and out_file.stat().st_size > 0:
         return out_file
 
-    # Stream-copy fallback if re-encode fails
     fallback_cmd = [
         "ffmpeg",
         "-y",
@@ -449,7 +443,7 @@ def download_youtube_with_pytubefix(
 
     vid_id = extract_youtube_id(url)
     clean_url = f"https://www.youtube.com/watch?v={vid_id}" if vid_id else url
-    yt = YouTube(clean_url)
+    yt = YouTube(clean_url, use_po_token=True)
 
     if mode == "audio":
         audio_stream = yt.streams.filter(only_audio=True).order_by("abr").desc().first()
@@ -476,7 +470,6 @@ def download_youtube_with_pytubefix(
         or yt.streams.filter(progressive=True, file_extension="mp4").order_by("resolution").desc().first()
     )
 
-    # For 1080p or muted video, try adaptive stream
     if (quality == "1080" or is_muted) or not prog_stream:
         vid_stream = (
             yt.streams.filter(adaptive=True, only_video=True, file_extension="mp4", res=target_res).first()
@@ -543,7 +536,7 @@ def run_universal_platform_download(
         "-o", raw_template,
     ]
     if is_yt:
-        base_cmd += ["--extractor-args", "youtube:player_client=ios,android,web"]
+         base_cmd += ["--extractor-args", "youtube:player_client=default,ios,android"]
     if COOKIES_FILE.exists():
         base_cmd += ["--cookies", str(COOKIES_FILE)]
 
@@ -566,7 +559,6 @@ def run_universal_platform_download(
 
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=95)
 
-    # Fallback with simplest 'best' format if strict format selector fails (common on Pinterest/Instagram/Reddit)
     if proc.returncode != 0 and mode != "audio":
         fallback_cmd = base_cmd + ["-f", "best", "--merge-output-format", format_type, url]
         proc = subprocess.run(fallback_cmd, capture_output=True, text=True, timeout=90)
@@ -619,7 +611,6 @@ def process_download_job(
 
         # ------------------- YOUTUBE FLOW -------------------
         if is_yt:
-            # Engine 1: Try Cloud CDN first
             direct_cdn_url = get_cloud_cdn_direct_link(url, mode, format_type, quality)
             if direct_cdn_url:
                 if not has_trim and not is_muted:
@@ -633,7 +624,6 @@ def process_download_job(
                     )
                     return
 
-                # Try cutting or muting directly from Cloud CDN URL
                 try:
                     update_job(job_id, progress=85)
                     out_path = job_dir / f"final_output.{format_type}"
@@ -663,7 +653,6 @@ def process_download_job(
                 except Exception:
                     pass
 
-            # Engine 2: Pytubefix Local Download Fallback
             downloaded_file = None
             try:
                 update_job(job_id, progress=60)
@@ -671,7 +660,6 @@ def process_download_job(
                     url, job_dir, mode, format_type, quality, is_muted and not has_trim
                 )
             except Exception:
-                # Engine 3: yt-dlp Multi-Client Fallback
                 update_job(job_id, progress=75)
                 downloaded_file = run_universal_platform_download(
                     url, job_dir, mode, format_type, quality, is_muted and not has_trim, is_yt=True
@@ -875,7 +863,6 @@ def api_prepare(
         safe_header_title = f"{safe_header_title}_Clip_{int(start_sec)}s_{int(end_sec)}s"
     final_filename = f"{safe_header_title}.{format_type}"
 
-    # Instant return if prewarmed YouTube link is already in cache
     if is_yt and not has_trim and not is_muted:
         vid_id = extract_youtube_id(url)
         clean_url = f"https://www.youtube.com/watch?v={vid_id}" if vid_id else url
@@ -894,7 +881,6 @@ def api_prepare(
                     "filename": final_filename,
                 })
 
-    # Queue background job so request never times out
     job_id = str(uuid.uuid4())
     with JOBS_LOCK:
         JOBS[job_id] = {
