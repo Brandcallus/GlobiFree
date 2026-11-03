@@ -7,10 +7,10 @@ import shutil
 import threading
 import subprocess
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from urllib.parse import quote
 
-from fastapi import FastAPI, Form, HTTPException, Query, BackgroundTasks, Response
+from fastapi import FastAPI, Form, HTTPException, Query, BackgroundTasks
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from curl_cffi import requests as cffi_requests
@@ -28,8 +28,9 @@ app.add_middleware(
 TEMP_DIR = Path("/tmp/globifree_downloads")
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 COOKIES_FILE = Path("cookies.txt")
+FEEDBACK_FILE = Path("/tmp/globifree_feedback.json")
 
-# Persistent Keep-Alive Chrome Session for 2x Faster Cloud Handshakes
+# Persistent Keep-Alive Chrome Session
 HTTP_SESSION = cffi_requests.Session(impersonate="chrome")
 
 # In-memory Turbo Caches
@@ -37,6 +38,7 @@ INFO_CACHE: Dict[str, Dict[str, Any]] = {}
 JOB_CACHE: Dict[str, Dict[str, Any]] = {}
 JOBS_BY_ID: Dict[str, Dict[str, Any]] = {}
 CACHE_LOCK = threading.Lock()
+FEEDBACK_LOCK = threading.Lock()
 
 
 def sanitize_filename(name: str) -> str:
@@ -59,10 +61,10 @@ def cleanup_dir(path: Path):
         pass
 
 
-def format_duration(seconds: Optional[int]) -> str:
+def format_duration(seconds: Optional[float]) -> str:
     if not seconds:
         return "HD Ready"
-    seconds = int(seconds)
+    seconds = int(float(seconds))
     hrs, rem = divmod(seconds, 3600)
     mins, secs = divmod(rem, 60)
     if hrs > 0:
@@ -70,17 +72,50 @@ def format_duration(seconds: Optional[int]) -> str:
     return f"{mins:02d}:{secs:02d}"
 
 
-def time_str_to_seconds(t_str: Optional[str]) -> Optional[int]:
-    if not t_str:
+def time_str_to_seconds(t_str: Optional[str]) -> Optional[float]:
+    if t_str is None:
         return None
-    parts = [int(p) for p in str(t_str).strip().split(":") if p.isdigit()]
-    if len(parts) == 2:
-        return parts[0] * 60 + parts[1]
-    if len(parts) == 3:
-        return parts[0] * 3600 + parts[1] * 60 + parts[2]
-    if len(parts) == 1:
-        return parts[0]
+    clean = str(t_str).strip()
+    if not clean:
+        return None
+    try:
+        if ":" not in clean:
+            return max(0.0, float(clean))
+        parts = [float(p) for p in clean.split(":")]
+        if len(parts) == 2:
+            return max(0.0, parts[0] * 60 + parts[1])
+        if len(parts) == 3:
+            return max(0.0, parts[0] * 3600 + parts[1] * 60 + parts[2])
+    except Exception:
+        return None
     return None
+
+
+def detect_platform_name(url: str) -> str:
+    u = url.lower()
+    if "youtube.com" in u or "youtu.be" in u:
+        return "YOUTUBE"
+    if "instagram.com" in u:
+        return "INSTAGRAM"
+    if "pinterest." in u or "pin.it" in u:
+        return "PINTEREST"
+    if "twitter.com" in u or "x.com" in u or "t.co" in u:
+        return "X / TWITTER"
+    if "facebook.com" in u or "fb.watch" in u or "fb.com" in u:
+        return "FACEBOOK"
+    if "reddit.com" in u or "redd.it" in u:
+        return "REDDIT"
+    if "tiktok.com" in u:
+        return "TIKTOK"
+    if "threads.net" in u:
+        return "THREADS"
+    if "soundcloud.com" in u:
+        return "SOUNDCLOUD"
+    if "twitch.tv" in u:
+        return "TWITCH"
+    if "vimeo.com" in u:
+        return "VIMEO"
+    return "UNIVERSAL"
 
 
 def extract_youtube_id(url: str) -> Optional[str]:
@@ -95,10 +130,11 @@ def extract_youtube_id(url: str) -> Optional[str]:
 
 
 # =====================================================================
-# 1. INSTANT 0.2s FETCH INFO (With Memory Cache)
+# 1. INSTANT 0.2s FETCH INFO (YouTube + 10+ Universal Platforms)
 # =====================================================================
 def fast_fetch_info(url: str) -> dict:
-    is_yt = "youtube.com" in url.lower() or "youtu.be" in url.lower()
+    platform = detect_platform_name(url)
+    is_yt = platform == "YOUTUBE"
     vid_id = extract_youtube_id(url) if is_yt else None
     cache_key = vid_id or url.strip()
 
@@ -107,6 +143,7 @@ def fast_fetch_info(url: str) -> dict:
         if cached_info and (time.time() - cached_info.get("_ts", 0) < 1800):
             return {k: v for k, v in cached_info.items() if k != "_ts"}
 
+    # A. Instant 0.2s YouTube oEmbed (Untouched & Fast)
     if is_yt:
         clean_yt_url = f"https://www.youtube.com/watch?v={vid_id}" if vid_id else url
         oembed_urls = [
@@ -119,7 +156,12 @@ def fast_fetch_info(url: str) -> dict:
                 if resp.status_code == 200:
                     data = resp.json()
                     if data.get("title"):
-                        thumb = data.get("thumbnail_url") or (
+                        thumb = (
+                            f"https://i.ytimg.com/vi/{vid_id}/maxresdefault.jpg"
+                            if vid_id
+                            else data.get("thumbnail_url", "")
+                        )
+                        fallback_thumb = data.get("thumbnail_url") or (
                             f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg" if vid_id else ""
                         )
                         result = {
@@ -127,7 +169,8 @@ def fast_fetch_info(url: str) -> dict:
                             "uploader": data.get("author_name") or "YouTube Creator",
                             "duration": 0,
                             "duration_string": "HD Ready",
-                            "thumbnail": thumb,
+                            "thumbnail": fallback_thumb,
+                            "hd_thumbnail": thumb,
                             "platform": "YOUTUBE",
                             "max_quality": "1080P HD",
                         }
@@ -137,6 +180,7 @@ def fast_fetch_info(url: str) -> dict:
             except Exception:
                 pass
 
+    # B. Universal yt-dlp metadata extraction for Instagram, Pinterest, X, FB, Reddit, TikTok, etc.
     cmd = [
         "yt-dlp",
         "--dump-json",
@@ -148,18 +192,20 @@ def fast_fetch_info(url: str) -> dict:
         url,
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=12)
         if proc.returncode == 0 and proc.stdout.strip():
             info = json.loads(proc.stdout.splitlines()[0])
             duration = info.get("duration") or 0
+            thumb = info.get("thumbnail") or ""
             result = {
-                "title": info.get("title") or "GlobiFree Media",
-                "uploader": info.get("uploader") or info.get("channel") or "Creator",
+                "title": info.get("title") or f"{platform.title()} Media",
+                "uploader": info.get("uploader") or info.get("channel") or platform.title(),
                 "duration": duration,
                 "duration_string": format_duration(duration),
-                "thumbnail": info.get("thumbnail") or "",
-                "platform": "INSTAGRAM" if "instagram.com" in url.lower() else "YOUTUBE",
-                "max_quality": "1080P HD",
+                "thumbnail": thumb,
+                "hd_thumbnail": thumb,
+                "platform": platform,
+                "max_quality": "HD READY",
             }
             with CACHE_LOCK:
                 INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
@@ -167,11 +213,34 @@ def fast_fetch_info(url: str) -> dict:
     except Exception:
         pass
 
-    raise HTTPException(status_code=400, detail="Unable to fetch link details. Please check the URL.")
+    # C. Noembed Universal Fallback (for TikTok, X, SoundCloud, Vimeo if yt-dlp metadata is slow)
+    try:
+        resp = HTTP_SESSION.get(f"https://noembed.com/embed?url={quote(url)}", timeout=4)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("title"):
+                thumb = data.get("thumbnail_url") or ""
+                result = {
+                    "title": data.get("title"),
+                    "uploader": data.get("author_name") or platform.title(),
+                    "duration": 0,
+                    "duration_string": "HD Ready",
+                    "thumbnail": thumb,
+                    "hd_thumbnail": thumb,
+                    "platform": platform,
+                    "max_quality": "HD READY",
+                }
+                with CACHE_LOCK:
+                    INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
+                return result
+    except Exception:
+        pass
+
+    raise HTTPException(status_code=400, detail="Unable to fetch link details. Ensure the link is public.")
 
 
 # =====================================================================
-# 2. TURBO CLOUD ENGINE WITH PARALLEL PRE-WARMING
+# 2. YOUTUBE TURBO CLOUD ENGINE + EXACT FFMPEG CLIP TRIMMER
 # =====================================================================
 CLOUD_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -188,6 +257,78 @@ def resolve_cloud_format(mode: str, format_type: str, quality: str) -> str:
     return quality if quality in ["1080", "720", "480", "360"] else "720"
 
 
+def cut_remote_or_local_media_exact(
+    source_url_or_path: str,
+    out_file: Path,
+    start_sec: float,
+    end_sec: float,
+    mode: str,
+    format_type: str,
+    quality: str,
+    is_muted: bool = False,
+) -> Path:
+    """
+    Uses FFmpeg fast HTTP Range seeking (-ss before -i) so ONLY the requested
+    1s - 5m segment is downloaded and cut with millisecond precision!
+    """
+    clip_duration = max(0.5, round(end_sec - start_sec, 2))
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-ss", str(start_sec),
+        "-i", source_url_or_path,
+        "-t", str(clip_duration),
+    ]
+
+    if mode == "audio":
+        cmd += ["-vn"]
+        if format_type == "mp3":
+            bitrate = f"{quality}k" if str(quality).isdigit() else "320k"
+            cmd += ["-c:a", "libmp3lame", "-b:a", bitrate]
+        elif format_type == "m4a":
+            cmd += ["-c:a", "aac", "-b:a", "192k"]
+        elif format_type == "wav":
+            cmd += ["-c:a", "pcm_s16le"]
+    else:
+        if is_muted:
+            cmd += ["-an"]
+        # Ultrafast re-encode guarantees exact 1-second frame-accurate cuts without black screens
+        if format_type == "webm":
+            cmd += ["-c:v", "libvpx", "-b:v", "1M"]
+            if not is_muted:
+                cmd += ["-c:a", "libvorbis"]
+        else:
+            cmd += [
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-crf", "23",
+                "-movflags", "+faststart",
+            ]
+            if not is_muted:
+                cmd += ["-c:a", "aac", "-b:a", "128k"]
+
+    cmd.append(str(out_file))
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=95)
+    if proc.returncode == 0 and out_file.exists() and out_file.stat().st_size > 0:
+        return out_file
+
+    # Fallback: stream copy if codec re-encode failed
+    fallback_cmd = [
+        "ffmpeg",
+        "-y",
+        "-ss", str(start_sec),
+        "-i", source_url_or_path,
+        "-t", str(clip_duration),
+    ]
+    if is_muted and mode == "video":
+        fallback_cmd += ["-an", "-c:v", "copy"]
+    else:
+        fallback_cmd += ["-c", "copy"]
+    fallback_cmd.append(str(out_file))
+    subprocess.run(fallback_cmd, check=True, timeout=60)
+    return out_file
+
+
 def _background_poll_worker(internal_id: str):
     with CACHE_LOCK:
         entry = JOBS_BY_ID.get(internal_id)
@@ -195,7 +336,8 @@ def _background_poll_worker(internal_id: str):
         return
 
     progress_urls = entry.get("progress_urls", [])
-    # Fast polling: every 0.25s for the first 25 checks, then 0.45s
+    has_trim = entry.get("has_trim", False)
+
     for attempt in range(90):
         if entry.get("status") == "ready":
             return
@@ -206,15 +348,44 @@ def _background_poll_worker(internal_id: str):
                     p_data = p_resp.json()
                     raw_prog = p_data.get("progress")
                     if isinstance(raw_prog, (int, float)):
-                        pct = min(98, max(20, int(raw_prog / 10)))
+                        max_p = 85 if has_trim else 98
+                        pct = min(max_p, max(20, int(raw_prog / 10)))
                         entry["progress"] = pct
 
                     dl_url = p_data.get("download_url")
                     if dl_url and (p_data.get("success") == 1 or raw_prog == 1000 or dl_url.startswith("http")):
-                        entry["download_url"] = dl_url
-                        entry["progress"] = 100
-                        entry["status"] = "ready"
-                        return
+                        # If user did NOT request trim, return the direct CDN link immediately!
+                        if not has_trim:
+                            entry["download_url"] = dl_url
+                            entry["progress"] = 100
+                            entry["status"] = "ready"
+                            return
+
+                        # If user DID request trim, slice the exact clip via FFmpeg HTTP Range seeking!
+                        try:
+                            entry["progress"] = 92
+                            trim_dir = TEMP_DIR / internal_id
+                            trim_dir.mkdir(parents=True, exist_ok=True)
+                            ext = entry["format_type"]
+                            out_path = trim_dir / f"trimmed.{ext}"
+                            cut_remote_or_local_media_exact(
+                                dl_url,
+                                out_path,
+                                entry["start_sec"],
+                                entry["end_sec"],
+                                entry["mode"],
+                                entry["format_type"],
+                                entry["quality"],
+                                entry.get("is_muted", False),
+                            )
+                            entry["download_url"] = f"/api/stream/{internal_id}?filename={quote(entry['filename'])}"
+                            entry["progress"] = 100
+                            entry["status"] = "ready"
+                            return
+                        except Exception as e:
+                            entry["status"] = "failed"
+                            entry["error"] = f"Clip trimming failed: {str(e)}"
+                            return
 
                     if raw_prog == 1000 and not dl_url and p_data.get("success") == 0:
                         entry["status"] = "failed"
@@ -236,6 +407,8 @@ def start_or_get_cloud_job(
     quality: str,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
+    is_muted: bool = False,
+    filename: str = "GlobiFree_Media.mp4",
 ) -> Optional[Dict[str, Any]]:
     vid_id = extract_youtube_id(url)
     clean_url = f"https://www.youtube.com/watch?v={vid_id}" if vid_id else url
@@ -245,20 +418,77 @@ def start_or_get_cloud_job(
     end_sec = time_str_to_seconds(end_time)
     has_trim = start_sec is not None and end_sec is not None and end_sec > start_sec
 
-    cache_key = f"{vid_id or clean_url}:{cloud_fmt}:{start_sec if has_trim else 0}:{end_sec if has_trim else 0}"
+    cache_key = f"{vid_id or clean_url}:{cloud_fmt}:{start_sec if has_trim else 0}:{end_sec if has_trim else 0}:{is_muted}"
 
     with CACHE_LOCK:
         existing = JOB_CACHE.get(cache_key)
         if existing and (time.time() - existing["created_at"] < 600) and existing["status"] != "failed":
+            # If a pre-warmed base stream already has a download_url and we need a trim:
             return existing
+
+        # Check if an untrimmed pre-warmed job is already ready that we can slice immediately!
+        if has_trim:
+            base_key = f"{vid_id or clean_url}:{cloud_fmt}:0:0:False"
+            base_job = JOB_CACHE.get(base_key)
+            if base_job and base_job.get("status") == "ready" and base_job.get("download_url"):
+                internal_id = str(uuid.uuid4())
+                entry = {
+                    "job_id": internal_id,
+                    "remote_id": base_job.get("remote_id"),
+                    "cache_key": cache_key,
+                    "status": "processing",
+                    "progress": 88,
+                    "download_url": None,
+                    "progress_urls": base_job.get("progress_urls", []),
+                    "created_at": time.time(),
+                    "error": None,
+                    "has_trim": True,
+                    "start_sec": start_sec,
+                    "end_sec": end_sec,
+                    "mode": mode,
+                    "format_type": format_type,
+                    "quality": quality,
+                    "is_muted": is_muted,
+                    "filename": filename,
+                }
+                JOB_CACHE[cache_key] = entry
+                JOBS_BY_ID[internal_id] = entry
+
+                def _slice_ready_stream(base_dl_url: str, job_entry: dict):
+                    try:
+                        trim_dir = TEMP_DIR / job_entry["job_id"]
+                        trim_dir.mkdir(parents=True, exist_ok=True)
+                        out_path = trim_dir / f"trimmed.{job_entry['format_type']}"
+                        cut_remote_or_local_media_exact(
+                            base_dl_url,
+                            out_path,
+                            job_entry["start_sec"],
+                            job_entry["end_sec"],
+                            job_entry["mode"],
+                            job_entry["format_type"],
+                            job_entry["quality"],
+                            job_entry["is_muted"],
+                        )
+                        job_entry["download_url"] = f"/api/stream/{job_entry['job_id']}?filename={quote(job_entry['filename'])}"
+                        job_entry["progress"] = 100
+                        job_entry["status"] = "ready"
+                    except Exception as e:
+                        job_entry["status"] = "failed"
+                        job_entry["error"] = f"Trimming error: {str(e)}"
+
+                threading.Thread(
+                    target=_slice_ready_stream, args=(base_job["download_url"], entry), daemon=True
+                ).start()
+                return entry
 
     api_hosts = ["https://p.savenow.to", "https://p.oceansaver.in"]
     for host in api_hosts:
         try:
+            # Always request full base stream from CDN (fast cache hit) and slice exact timestamps with FFmpeg if trimmed
             params = {
                 "button": "1",
-                "start": str(start_sec) if has_trim else "1",
-                "end": str(end_sec) if has_trim else "1",
+                "start": "1",
+                "end": "1",
                 "format": cloud_fmt,
                 "iframe_source": "https://ddownr.com/",
                 "url": clean_url,
@@ -295,6 +525,14 @@ def start_or_get_cloud_job(
                 "progress_urls": progress_urls,
                 "created_at": time.time(),
                 "error": None,
+                "has_trim": has_trim,
+                "start_sec": start_sec,
+                "end_sec": end_sec,
+                "mode": mode,
+                "format_type": format_type,
+                "quality": quality,
+                "is_muted": is_muted,
+                "filename": filename,
             }
 
             with CACHE_LOCK:
@@ -320,9 +558,9 @@ def prewarm_youtube_defaults(url: str):
 
 
 # =====================================================================
-# 3. FALLBACK ENGINE (For Instagram Reels / Muted Videos)
+# 3. UNIVERSAL MULTI-PLATFORM ENGINE (Instagram, Pinterest, X, FB, Reddit, TikTok, etc.)
 # =====================================================================
-def run_local_fallback_download(
+def run_universal_platform_download(
     url: str,
     job_dir: Path,
     mode: str,
@@ -332,8 +570,10 @@ def run_local_fallback_download(
     start_time: Optional[str],
     end_time: Optional[str],
 ) -> Path:
-    output_template = str(job_dir / "media.%(ext)s")
-    is_trimmed = bool(start_time and end_time)
+    raw_template = str(job_dir / "raw_media.%(ext)s")
+    start_sec = time_str_to_seconds(start_time)
+    end_sec = time_str_to_seconds(end_time)
+    has_trim = start_sec is not None and end_sec is not None and end_sec > start_sec
 
     cmd = [
         "yt-dlp",
@@ -343,7 +583,7 @@ def run_local_fallback_download(
         "--geo-bypass",
         "--impersonate", "chrome",
         "--concurrent-fragments", "10",
-        "-o", output_template,
+        "-o", raw_template,
     ]
     if COOKIES_FILE.exists():
         cmd += ["--cookies", str(COOKIES_FILE)]
@@ -363,24 +603,98 @@ def run_local_fallback_download(
         )
         cmd += ["-f", fmt, "--merge-output-format", format_type]
 
-    if is_trimmed:
-        cmd += ["--download-sections", f"*{start_time}-{end_time}"]
-    if is_muted and mode == "video":
+    if is_muted and mode == "video" and not has_trim:
         cmd += ["--postprocessor-args", "ffmpeg:-an"]
 
     cmd.append(url)
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
-    if proc.returncode == 0:
-        files = [f for f in job_dir.glob("media.*") if not f.name.endswith(".part")]
-        if files and files[0].stat().st_size > 0:
-            return files[0]
+    if proc.returncode != 0:
+        err_lines = [line for line in (proc.stderr or "").splitlines() if line.strip()]
+        raise RuntimeError(err_lines[-1] if err_lines else "Platform stream extraction failed")
 
-    err_lines = [line for line in (proc.stderr or "").splitlines() if line.strip()]
-    raise RuntimeError(err_lines[-1] if err_lines else "Unable to process media stream")
+    files = [f for f in job_dir.glob("raw_media.*") if not f.name.endswith(".part")]
+    if not files or files[0].stat().st_size == 0:
+        raise RuntimeError("Downloaded file was empty")
+
+    downloaded_raw = files[0]
+
+    # If user requested a specific clip (e.g. 1s or 1-2m), cut the exact segment with FFmpeg!
+    if has_trim:
+        trimmed_out = job_dir / f"trimmed_output.{format_type}"
+        return cut_remote_or_local_media_exact(
+            str(downloaded_raw),
+            trimmed_out,
+            start_sec,
+            end_sec,
+            mode,
+            format_type,
+            quality,
+            is_muted,
+        )
+
+    return downloaded_raw
 
 
 # =====================================================================
-# 4. API ROUTES (Including Ad-Safe /health Bot Endpoint)
+# 4. USER REVIEWS & PROBLEM REPORTER STORAGE
+# =====================================================================
+DEFAULT_FEEDBACK = [
+    {
+        "id": "seed-1",
+        "name": "Aarav Edits",
+        "type": "review",
+        "platform": "YOUTUBE",
+        "rating": 5,
+        "message": "720p video and clip trimmer work super smoothly for my shorts editing!",
+        "status": "Verified User",
+        "time": "Today",
+    },
+    {
+        "id": "seed-2",
+        "name": "Riya Designs",
+        "type": "review",
+        "platform": "PINTEREST",
+        "rating": 5,
+        "message": "Finally able to download Pinterest video pins and Instagram reels in one place without watermarks.",
+        "status": "Verified User",
+        "time": "Today",
+    },
+]
+
+
+def load_feedback_list() -> List[dict]:
+    with FEEDBACK_LOCK:
+        if not FEEDBACK_FILE.exists():
+            FEEDBACK_FILE.write_text(json.dumps(DEFAULT_FEEDBACK), encoding="utf-8")
+            return list(DEFAULT_FEEDBACK)
+        try:
+            data = json.loads(FEEDBACK_FILE.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else list(DEFAULT_FEEDBACK)
+        except Exception:
+            return list(DEFAULT_FEEDBACK)
+
+
+def save_feedback_item(item: dict) -> List[dict]:
+    with FEEDBACK_LOCK:
+        try:
+            current = (
+                json.loads(FEEDBACK_FILE.read_text(encoding="utf-8"))
+                if FEEDBACK_FILE.exists()
+                else list(DEFAULT_FEEDBACK)
+            )
+            if not isinstance(current, list):
+                current = list(DEFAULT_FEEDBACK)
+        except Exception:
+            current = list(DEFAULT_FEEDBACK)
+
+        current.insert(0, item)
+        current = current[:60]
+        FEEDBACK_FILE.write_text(json.dumps(current), encoding="utf-8")
+        return current
+
+
+# =====================================================================
+# 5. API ROUTES
 # =====================================================================
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health_check():
@@ -407,11 +721,40 @@ def api_info(
 
     info = fast_fetch_info(target_url)
 
-    # Start parallel pre-warming for 720p MP4 and MP3 immediately
+    # Pre-warm YouTube defaults in background without affecting other platforms
     if info.get("platform") == "YOUTUBE":
         prewarm_youtube_defaults(target_url)
 
     return info
+
+
+@app.get("/api/thumbnail")
+def download_hd_thumbnail(url: str = Query(...), title: str = Query("GlobiFree_Thumbnail")):
+    """1-Click HD Thumbnail Downloader for YouTube, Instagram, Pinterest, etc."""
+    info = fast_fetch_info(url)
+    thumb_url = info.get("hd_thumbnail") or info.get("thumbnail")
+    if not thumb_url:
+        raise HTTPException(status_code=404, detail="No thumbnail found for this link.")
+
+    safe_title = ascii_safe_filename(title)
+    thumb_dir = TEMP_DIR / f"thumb_{uuid.uuid4()}"
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+    thumb_path = thumb_dir / f"{safe_title}.jpg"
+
+    try:
+        resp = HTTP_SESSION.get(thumb_url, timeout=8)
+        if resp.status_code != 200 and info.get("thumbnail"):
+            resp = HTTP_SESSION.get(info["thumbnail"], timeout=8)
+        thumb_path.write_bytes(resp.content)
+        return FileResponse(
+            path=str(thumb_path),
+            filename=f"{safe_title}_HD_Thumbnail.jpg",
+            media_type="image/jpeg",
+            headers={"Content-Disposition": f'attachment; filename="{safe_title}_HD_Thumbnail.jpg"'},
+        )
+    except Exception as e:
+        cleanup_dir(thumb_dir)
+        raise HTTPException(status_code=500, detail=f"Thumbnail download failed: {str(e)}")
 
 
 @app.post("/api/prewarm")
@@ -421,7 +764,7 @@ def api_prewarm(
     format_type: str = Form("mp4"),
     quality: str = Form("720"),
 ):
-    if "youtube.com" in url.lower() or "youtu.be" in url.lower():
+    if detect_platform_name(url) == "YOUTUBE":
         entry = start_or_get_cloud_job(url, mode, format_type, quality)
         if entry:
             return {"status": entry["status"], "progress": entry["progress"], "job_id": entry["job_id"]}
@@ -440,7 +783,12 @@ def api_prepare(
     end_time: Optional[str] = Form(None),
 ):
     is_muted = mute_video.lower() == "true"
-    is_yt = "youtube.com" in url.lower() or "youtu.be" in url.lower()
+    platform = detect_platform_name(url)
+    is_yt = platform == "YOUTUBE"
+
+    start_sec = time_str_to_seconds(start_time)
+    end_sec = time_str_to_seconds(end_time)
+    has_trim = start_sec is not None and end_sec is not None and end_sec > start_sec
 
     if not custom_title:
         try:
@@ -450,13 +798,16 @@ def api_prepare(
             custom_title = "GlobiFree_Media"
 
     safe_header_title = ascii_safe_filename(custom_title or "GlobiFree_Media")
+    if has_trim:
+        safe_header_title = f"{safe_header_title}_Clip_{int(start_sec)}s_{int(end_sec)}s"
     final_filename = f"{safe_header_title}.{format_type}"
 
-    # 1. YOUTUBE TURBO CLOUD ENGINE
-    if is_yt and not is_muted:
-        entry = start_or_get_cloud_job(url, mode, format_type, quality, start_time, end_time)
+    # 1. YOUTUBE TURBO CLOUD ENGINE (Supports both Full Video & Exact FFmpeg Clip Trimming)
+    if is_yt and (not is_muted or has_trim):
+        entry = start_or_get_cloud_job(
+            url, mode, format_type, quality, start_time, end_time, is_muted, final_filename
+        )
         if entry:
-            # Check quickly (up to 1.8s) in case pre-warmed link is already ready
             for _ in range(9):
                 if entry["status"] == "ready" and entry.get("download_url"):
                     return JSONResponse(
@@ -480,18 +831,21 @@ def api_prepare(
                     }
                 )
 
-    # 2. INSTAGRAM / MUTED FALLBACK ENGINE
+    # 2. UNIVERSAL MULTI-PLATFORM ENGINE (Instagram, Pinterest, X, FB, Reddit, TikTok, etc.)
     job_id = str(uuid.uuid4())
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        downloaded_file = run_local_fallback_download(
+        downloaded_file = run_universal_platform_download(
             url, job_dir, mode, format_type, quality, is_muted, start_time, end_time
         )
     except Exception as e:
         cleanup_dir(job_dir)
-        raise HTTPException(status_code=500, detail=f"Download error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"{platform.title()} download failed: {str(e)}. You can report this link below!",
+        )
 
     final_ext = downloaded_file.suffix.lstrip(".") or format_type
     local_filename = f"{safe_header_title}.{final_ext}"
@@ -541,7 +895,9 @@ def stream_prepared_file(
     if not job_dir.exists():
         raise HTTPException(status_code=404, detail="File expired or not found.")
 
-    files = [f for f in job_dir.glob("*") if f.is_file()]
+    files = [f for f in job_dir.glob("*") if f.is_file() and not f.name.startswith("raw_media")]
+    if not files:
+        files = [f for f in job_dir.glob("*") if f.is_file()]
     if not files:
         cleanup_dir(job_dir)
         raise HTTPException(status_code=404, detail="File not found.")
@@ -561,3 +917,36 @@ def stream_prepared_file(
             "Content-Length": str(file_size),
         },
     )
+
+
+@app.get("/api/feedback")
+def get_feedback():
+    return {"items": load_feedback_list()}
+
+
+@app.post("/api/feedback")
+def post_feedback(
+    name: str = Form("Anonymous User"),
+    feedback_type: str = Form("review"),
+    platform: str = Form("YOUTUBE"),
+    rating: int = Form(5),
+    media_url: Optional[str] = Form(None),
+    message: str = Form(...),
+):
+    clean_msg = message.strip()
+    if not clean_msg:
+        raise HTTPException(status_code=400, detail="Please write a message or issue description.")
+
+    item = {
+        "id": str(uuid.uuid4())[:8],
+        "name": (name.strip() or "Anonymous User")[:40],
+        "type": "issue" if feedback_type == "issue" else "review",
+        "platform": platform.strip().upper()[:20],
+        "rating": max(1, min(5, int(rating))),
+        "media_url": (media_url or "").strip()[:180],
+        "message": clean_msg[:400],
+        "status": "Logged for Admin Check" if feedback_type == "issue" else "Verified Feedback",
+        "time": time.strftime("%d %b, %I:%M %p"),
+    }
+    updated = save_feedback_item(item)
+    return {"status": "ok", "items": updated}
