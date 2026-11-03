@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from curl_cffi import requests as cffi_requests
 
-app = FastAPI(title="GlobiFree Media Downloader")
+app = FastAPI(title="GlobiFree Media Downloader Pro")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,11 +28,9 @@ TEMP_DIR = Path("/tmp/globifree_downloads")
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 COOKIES_FILE = Path("cookies.txt")
 
-
 def sanitize_filename(name: str) -> str:
     cleaned = re.sub(r'[\\/*?:"<>|]', "", name).strip()
     return cleaned[:100] if cleaned else "GlobiFree_Media"
-
 
 def ascii_safe_filename(name: str) -> str:
     cleaned = sanitize_filename(name)
@@ -40,14 +38,12 @@ def ascii_safe_filename(name: str) -> str:
     ascii_name = re.sub(r"\s+", " ", ascii_name)
     return ascii_name if len(ascii_name) > 2 else "GlobiFree_Media"
 
-
 def cleanup_dir(path: Path):
     try:
         if path.exists():
             shutil.rmtree(path, ignore_errors=True)
     except Exception:
         pass
-
 
 def format_duration(seconds: Optional[int]) -> str:
     if not seconds:
@@ -58,7 +54,6 @@ def format_duration(seconds: Optional[int]) -> str:
     if hrs > 0:
         return f"{hrs:02d}:{mins:02d}:{secs:02d}"
     return f"{mins:02d}:{secs:02d}"
-
 
 def time_str_to_seconds(t_str: Optional[str]) -> Optional[int]:
     if not t_str:
@@ -72,7 +67,6 @@ def time_str_to_seconds(t_str: Optional[str]) -> Optional[int]:
         return parts[0]
     return None
 
-
 def extract_youtube_id(url: str) -> Optional[str]:
     patterns = [
         r"(?:v=|\/videos\/|embed\/|youtu\.be\/|\/v\/|\/e\/|watch\?v=|&v=|\/shorts\/)([a-zA-Z0-9_-]{11})",
@@ -83,9 +77,8 @@ def extract_youtube_id(url: str) -> Optional[str]:
             return match.group(1)
     return None
 
-
 # =====================================================================
-# FAST FETCH INFO (0.2s Instant oEmbed - Untouched)
+# FAST FETCH INFO (0.2s Instant oEmbed)
 # =====================================================================
 def fast_fetch_info(url: str) -> dict:
     is_yt = "youtube.com" in url.lower() or "youtu.be" in url.lower()
@@ -99,7 +92,7 @@ def fast_fetch_info(url: str) -> dict:
         ]
         for oembed_endpoint in oembed_urls:
             try:
-                resp = cffi_requests.get(oembed_endpoint, impersonate="chrome", timeout=4)
+                resp = cffi_requests.get(oembed_endpoint, impersonate="chrome", timeout=3)
                 if resp.status_code == 200:
                     data = resp.json()
                     if data.get("title"):
@@ -129,7 +122,7 @@ def fast_fetch_info(url: str) -> dict:
         url,
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=12)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
         if proc.returncode == 0 and proc.stdout.strip():
             info = json.loads(proc.stdout.splitlines()[0])
             duration = info.get("duration") or 0
@@ -143,13 +136,13 @@ def fast_fetch_info(url: str) -> dict:
                 "max_quality": "1080P HD",
             }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not fetch details: {str(e)}")
+        raise HTTPException(status_code=400, detail="Could not fetch details. Check link.")
 
-    raise HTTPException(status_code=400, detail="Unable to fetch link details. Please check the URL.")
+    raise HTTPException(status_code=400, detail="Unable to fetch link details.")
 
 
 # =====================================================================
-# ENGINE 1: CLOUD CDN DIRECT LINK FOR CHROME (Bypasses YouTube IP Block)
+# ENGINE 1: ULTRA-FAST DIRECT CHROME DOWNLOAD URL GENERATOR
 # =====================================================================
 def get_cloud_cdn_direct_link(
     url: str,
@@ -162,26 +155,22 @@ def get_cloud_cdn_direct_link(
     vid_id = extract_youtube_id(url)
     clean_url = f"https://www.youtube.com/watch?v={vid_id}" if vid_id else url
 
-    # Map format for Cloud Converter API
     if mode == "audio":
-        cloud_fmt = format_type if format_type in ["mp3", "m4a", "wav", "ogg", "opus"] else "mp3"
+        cloud_fmt = format_type if format_type in ["mp3", "m4a", "wav"] else "mp3"
     else:
-        if format_type == "webm":
-            cloud_fmt = "webm"
-        else:
-            cloud_fmt = quality if quality in ["1080", "720", "480", "360"] else "720"
+        cloud_fmt = quality if quality in ["1080", "720", "480", "360"] else "720"
 
     start_sec = time_str_to_seconds(start_time)
     end_sec = time_str_to_seconds(end_time)
     has_trim = start_sec is not None and end_sec is not None and end_sec > start_sec
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0",
         "Referer": "https://ddownr.com/",
         "Origin": "https://ddownr.com",
     }
 
-    api_hosts = ["https://p.savenow.to", "https://p.oceansaver.in"]
+    api_hosts = ["https://p.oceansaver.in", "https://p.savenow.to"]
 
     for host in api_hosts:
         try:
@@ -198,7 +187,7 @@ def get_cloud_cdn_direct_link(
                 params=params,
                 headers=headers,
                 impersonate="chrome",
-                timeout=10,
+                timeout=5,
             )
             if init_resp.status_code != 200:
                 continue
@@ -210,26 +199,21 @@ def get_cloud_cdn_direct_link(
 
             progress_urls = [
                 init_data.get("progress_url"),
-                f"https://p.oceansaver.in/ajax/progress.php?id={job_id}",
-                f"https://p.savenow.to/ajax/progress.php?id={job_id}",
+                f"{host}/ajax/progress.php?id={job_id}",
             ]
             progress_urls = [u for u in progress_urls if u]
 
-            # Poll until ready (usually 1 to 6 seconds)
-            for _ in range(22):
+            # Fast Poll (Reduced to 12s total to avoid hanging at 90%)
+            for _ in range(12):
                 time.sleep(1.0)
                 for p_url in progress_urls:
                     try:
-                        p_resp = cffi_requests.get(
-                            p_url, headers=headers, impersonate="chrome", timeout=6
-                        )
+                        p_resp = cffi_requests.get(p_url, headers=headers, impersonate="chrome", timeout=4)
                         if p_resp.status_code == 200:
                             p_data = p_resp.json()
                             dl_url = p_data.get("download_url")
                             if dl_url and (p_data.get("success") == 1 or p_data.get("progress") == 1000):
                                 return dl_url
-                            if p_data.get("progress") == 1000 and not dl_url:
-                                break
                     except Exception:
                         continue
         except Exception:
@@ -237,9 +221,8 @@ def get_cloud_cdn_direct_link(
 
     return None
 
-
 # =====================================================================
-# ENGINE 2: SERVER FALLBACK (For Instagram Reels / Muted Video)
+# ENGINE 2: SERVER FALLBACK (For Instagram/Muted)
 # =====================================================================
 def run_local_fallback_download(
     url: str,
@@ -255,11 +238,10 @@ def run_local_fallback_download(
     is_trimmed = bool(start_time and end_time)
     is_yt = "youtube.com" in url.lower() or "youtu.be" in url.lower()
 
-    # Try pytubefix first if YouTube
     if is_yt:
         try:
             from pytubefix import YouTube
-            for client in ["ANDROID_VR", "IOS", "WEB_EMBED", "TV", "MWEB"]:
+            for client in ["ANDROID_VR", "IOS", "WEB_EMBED"]:
                 try:
                     yt = YouTube(url, client=client)
                     out_file = job_dir / f"output.{format_type}"
@@ -296,7 +278,6 @@ def run_local_fallback_download(
         except Exception:
             pass
 
-    # Clean yt-dlp command (Removed broken player_skip=webpage,configs!)
     cmd = [
         "yt-dlp",
         "--no-playlist",
@@ -304,12 +285,9 @@ def run_local_fallback_download(
         "--no-check-certificates",
         "--geo-bypass",
         "--impersonate", "chrome",
-        "--concurrent-fragments", "8",
+        "--concurrent-fragments", "10",
         "-o", output_template,
     ]
-    if COOKIES_FILE.exists():
-        cmd += ["--cookies", str(COOKIES_FILE)]
-
     if mode == "audio":
         cmd += [
             "-f", "bestaudio/best",
@@ -338,8 +316,7 @@ def run_local_fallback_download(
             return files[0]
 
     err_lines = [line for line in (proc.stderr or "").splitlines() if line.strip()]
-    raise RuntimeError(err_lines[-1] if err_lines else "Unable to process media stream")
-
+    raise RuntimeError(err_lines[-1] if err_lines else "Unable to process stream")
 
 @app.get("/", response_class=HTMLResponse)
 def serve_home():
@@ -347,7 +324,6 @@ def serve_home():
     if html_path.exists():
         return html_path.read_text(encoding="utf-8")
     return "<h1>index.html not found</h1>"
-
 
 @app.api_route("/api/info", methods=["GET", "POST"])
 def api_info(
@@ -359,10 +335,6 @@ def api_info(
         raise HTTPException(status_code=400, detail="URL is required.")
     return fast_fetch_info(target_url)
 
-
-# =====================================================================
-# NEW: PREPARE DIRECT CHROME DOWNLOAD LINK ENDPOINT
-# =====================================================================
 @app.post("/api/prepare")
 def api_prepare(
     url: str = Form(...),
@@ -386,7 +358,7 @@ def api_prepare(
 
     safe_header_title = ascii_safe_filename(custom_title or "GlobiFree_Media")
 
-    # 1. If YouTube (and not muted), get Direct High-Speed Cloud Link for Chrome Downloader!
+    # Fast YouTube Chrome Link Generation
     if is_yt and not is_muted:
         direct_cdn_url = get_cloud_cdn_direct_link(
             url, mode, format_type, quality, start_time, end_time
@@ -400,7 +372,6 @@ def api_prepare(
                 }
             )
 
-    # 2. Fallback: Prepare on server (for Instagram Reels or Muted Videos) & give Chrome a direct stream URL
     job_id = str(uuid.uuid4())
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -423,7 +394,6 @@ def api_prepare(
             "filename": final_filename,
         }
     )
-
 
 @app.get("/api/stream/{job_id}")
 def stream_prepared_file(
