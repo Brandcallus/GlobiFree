@@ -284,14 +284,11 @@ def _fetch_cdn_for_format(clean_url: str, vid_id: Optional[str], cloud_fmt: str,
             "X-Requested-With": "XMLHttpRequest",
         }
 
-        # Only use the canonical host — savenow.to is unreliable/dead
         hosts = ["https://p.oceansaver.in"]
 
         for host in hosts:
-            # Use a Session so cookies persist across init + progress
             session = cffi_requests.Session(impersonate="chrome")
             try:
-                # 1) init
                 params = {
                     "button": "1",
                     "start": "1",
@@ -318,13 +315,11 @@ def _fetch_cdn_for_format(clean_url: str, vid_id: Optional[str], cloud_fmt: str,
                 if not cdn_job_id:
                     continue
 
-                # 2) poll progress on the SAME host that created the job
                 progress_url = (
                     init_data.get("progress_url")
                     or f"{host}/ajax/progress.php?id={cdn_job_id}"
                 )
 
-                # Fail-fast: ~20s max per format
                 for _ in range(40):
                     time.sleep(0.5)
                     try:
@@ -477,6 +472,8 @@ def run_universal_platform_download(
         "--no-warnings",
         "--no-check-certificates",
         "--geo-bypass",
+        # FIX: Force YouTube to use specific player clients that work better with cookies on datacenter IPs
+        "--extractor-args", "youtube:player_client=mweb,tv,web_safari",
         "--concurrent-fragments", "8",
         "-o", raw_template,
     ]
@@ -552,7 +549,6 @@ def process_download_job(
         if is_yt:
             direct_cdn_url = get_cloud_cdn_direct_link(url, mode, format_type, quality, job_id=job_id)
             
-            # --- FIX: FALLBACK TO YT-DLP IF CDN FAILS ---
             if not direct_cdn_url:
                 update_job(job_id, progress=45)
                 try:
@@ -585,7 +581,6 @@ def process_download_job(
                     filename=local_filename,
                 )
                 return
-            # --- END FALLBACK ---
 
             if not has_trim and not is_muted:
                 cleanup_dir(job_dir)
@@ -606,7 +601,6 @@ def process_download_job(
                     direct_cdn_url, out_path, start_sec, end_sec, mode, format_type, quality, is_muted
                 )
             elif is_muted and mode == "video":
-                # ONLY strip audio if they explicitly want a muted video
                 subprocess.run(
                     [
                         "ffmpeg", "-y",
@@ -618,7 +612,6 @@ def process_download_job(
                     timeout=60,
                 )
             else:
-                # Should not be reached, but safeguard
                 return
 
             update_job(
