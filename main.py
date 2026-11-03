@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import json
 import time
 import uuid
@@ -8,7 +9,7 @@ import threading
 import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any, List
-from urllib.parse import quote, urljoin
+from urllib.parse import quote
 
 from fastapi import FastAPI, Form, HTTPException, Query, BackgroundTasks
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -40,20 +41,33 @@ JOBS_LOCK = threading.Lock()
 FEEDBACK_LOCK = threading.Lock()
 
 
-# Auto-upgrade yt-dlp and pytubefix in background on startup
-@app.on_event("startup")
-def auto_upgrade_extractors():
-    def _upgrade():
-        try:
-            subprocess.run(
-                ["pip", "install", "--no-cache-dir", "-U", "--pre", "yt-dlp[default]", "pytubefix"],
-                capture_output=True,
-                timeout=120,
-            )
-        except Exception:
-            pass
+# =====================================================================
+# 0. AUTO-SELF-UPDATING ENGINE (Bypasses Render Docker Layer Cache)
+# =====================================================================
+def force_upgrade_extractors():
+    try:
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--no-cache-dir",
+                "-q",
+                "-U",
+                "--pre",
+                "yt-dlp[default]",
+                "pytubefix",
+            ],
+            capture_output=True,
+            timeout=120,
+        )
+    except Exception:
+        pass
 
-    threading.Thread(target=_upgrade, daemon=True).start()
+
+# Start background upgrade immediately when container boots
+threading.Thread(target=force_upgrade_extractors, daemon=True).start()
 
 
 # =====================================================================
@@ -189,7 +203,6 @@ def get_cdn_lock(cache_key: str) -> threading.Lock:
 # 1. FAST INFO FETCH (Supports Videos & Photo Posts Across All Platforms)
 # =====================================================================
 def scrape_page_metadata(url: str, platform: str) -> Optional[dict]:
-    """Scrapes OpenGraph title & image/video metadata when a post is a Photo/Pin"""
     try:
         resp = cffi_requests.get(url, impersonate="chrome", timeout=8, allow_redirects=True)
         if resp.status_code != 200 or not resp.text:
@@ -280,7 +293,8 @@ def fast_fetch_info(url: str) -> dict:
         "--no-warnings",
         "--no-check-certificates",
         "--geo-bypass",
-        "--impersonate", "chrome",
+        "--impersonate",
+        "chrome",
     ]
     if COOKIES_FILE.exists():
         cmd += ["--cookies", str(COOKIES_FILE)]
@@ -308,7 +322,6 @@ def fast_fetch_info(url: str) -> dict:
     except Exception:
         pass
 
-    # Fallback for Photo/Image posts (Pinterest Image Pins, Instagram Photos, X/Twitter Images)
     scraped = scrape_page_metadata(url, platform)
     if scraped:
         with CACHE_LOCK:
@@ -329,7 +342,7 @@ def fast_fetch_info(url: str) -> dict:
 
 
 # =====================================================================
-# 2. YOUTUBE LAYER 1: MULTI-HOST CLOUD CDN ENGINE (savenow + oceansaver)
+# 2. LAYER 1: MULTI-MIRROR CLOUD CDN CLUSTER (With copyright=0 & API Key)
 # =====================================================================
 def _fetch_cdn_for_format(
     clean_url: str,
@@ -351,29 +364,32 @@ def _fetch_cdn_for_format(
             if cached and (time.time() - cached.get("ts", 0) < 1200):
                 return cached.get("url")
 
-        configs = [
+        # Official multi-mirror cluster used by top downloader sites (with copyright=0 & api key)
+        cluster_nodes = [
             {
-                "host": "https://p.savenow.to",
-                "iframe_source": "https://chrunos.com",
-                "referer": "https://chrunos.com/",
+                "host": "https://ab.cococococ.com",
+                "referer": "https://y2down.cc/",
+                "origin": "https://y2down.cc",
             },
             {
                 "host": "https://p.oceansaver.in",
-                "iframe_source": "https://www.y2down.app",
-                "referer": "https://www.y2down.app/",
+                "referer": "https://ddownr.com/",
+                "origin": "https://ddownr.com",
             },
             {
                 "host": "https://p.savenow.to",
-                "iframe_source": "https://ddownr.com/",
-                "referer": "https://ddownr.com/",
+                "referer": "https://loader.to/",
+                "origin": "https://loader.to",
             },
         ]
 
-        for cfg in configs:
-            host = cfg["host"]
+        for node in cluster_nodes:
+            host = node["host"]
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                "Referer": cfg["referer"],
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                "Referer": node["referer"],
+                "Origin": node["origin"],
+                "Accept": "*/*",
             }
             try:
                 params = {
@@ -381,8 +397,9 @@ def _fetch_cdn_for_format(
                     "start": "1",
                     "end": "1",
                     "format": cloud_fmt,
-                    "iframe_source": cfg["iframe_source"],
+                    "copyright": "0",
                     "url": clean_url,
+                    "api": "dfcb6d76f2f6a9894gjkege8a4ab232222",
                 }
                 init_resp = cffi_requests.get(
                     f"{host}/ajax/download.php",
@@ -399,18 +416,18 @@ def _fetch_cdn_for_format(
                 if not cdn_job_id:
                     continue
 
-                # Poll all valid progress endpoints safely (1.1s interval as required by API docs)
                 progress_urls = [
+                    init_data.get("progress_url"),
+                    f"{host}/ajax/progress.php?id={cdn_job_id}",
                     f"https://p.oceansaver.in/ajax/progress.php?id={cdn_job_id}",
                     f"https://p.savenow.to/ajax/progress.php?id={cdn_job_id}",
-                    init_data.get("progress_url"),
-                    f"https://p.savenow.to/api/progress?id={cdn_job_id}",
+                    f"https://ab.cococococ.com/ajax/progress.php?id={cdn_job_id}",
                 ]
                 progress_urls = list(dict.fromkeys([u for u in progress_urls if u]))
 
-                for _step in range(32):
-                    time.sleep(1.1)
-                    failed_permanently = False
+                for _step in range(38):
+                    time.sleep(0.9)
+                    abort_node = False
                     for p_url in progress_urls:
                         try:
                             p_resp = cffi_requests.get(
@@ -419,7 +436,17 @@ def _fetch_cdn_for_format(
                             if p_resp.status_code != 200:
                                 continue
                             p_data = p_resp.json()
+
                             dl_url = p_data.get("download_url")
+                            if not dl_url:
+                                alt_urls = p_data.get("alternative_download_urls")
+                                if isinstance(alt_urls, list) and alt_urls:
+                                    first_alt = alt_urls[0]
+                                    if isinstance(first_alt, dict):
+                                        dl_url = first_alt.get("url")
+                                    elif isinstance(first_alt, str):
+                                        dl_url = first_alt
+
                             if dl_url and str(dl_url).startswith("http"):
                                 with CACHE_LOCK:
                                     PREWARM_CACHE[cache_key] = {"url": dl_url, "ts": time.time()}
@@ -427,16 +454,15 @@ def _fetch_cdn_for_format(
 
                             raw_prog = p_data.get("progress")
                             if job_id and isinstance(raw_prog, (int, float)) and raw_prog > 0:
-                                mapped_pct = min(90, max(40, 40 + int((raw_prog / 1000.0) * 50)))
+                                mapped_pct = min(88, max(40, 40 + int((raw_prog / 1000.0) * 48)))
                                 update_job(job_id, progress=mapped_pct)
 
-                            status_text = str(p_data.get("text") or "").lower()
-                            if "fail" in status_text or "error" in status_text or "expired" in status_text:
-                                failed_permanently = True
+                            if p_data.get("success") == 0 and isinstance(raw_prog, (int, float)) and raw_prog >= 1000:
+                                abort_node = True
                                 break
                         except Exception:
                             continue
-                    if failed_permanently:
+                    if abort_node:
                         break
             except Exception:
                 continue
@@ -462,7 +488,7 @@ def get_cloud_cdn_direct_link(
             primary_fmt = "webm"
         else:
             primary_fmt = quality if quality in ["1080", "720", "480", "360"] else "720"
-        formats_to_try = [primary_fmt, "720", "360"]
+        formats_to_try = [primary_fmt, "720", "480", "360"]
 
     formats_to_try = list(dict.fromkeys(formats_to_try))
 
@@ -475,20 +501,55 @@ def get_cloud_cdn_direct_link(
 
 
 # =====================================================================
-# 3. YOUTUBE LAYER 2 & 3: PYTUBEFIX + PIPED API + YT-DLP 2026 FALLBACKS
+# 3. LAYER 2 & 3: COBALT + PIPED + INVIDIOUS PUBLIC API CLUSTERS
 # =====================================================================
-def get_piped_stream_url(url: str, mode: str, quality: str) -> Optional[str]:
-    """Fetches direct stream URL from public Piped API mirrors if needed"""
+def get_cobalt_cluster_url(url: str, mode: str, quality: str) -> Optional[str]:
+    vid_id = extract_youtube_id(url)
+    clean_url = f"https://www.youtube.com/watch?v={vid_id}" if vid_id else url
+    q_val = quality if quality in ["1080", "720", "480", "360"] else "720"
+
+    v10_instances = [
+        "https://cobalt-api.kwiatekmiki.com",
+        "https://cobalt-backend.canine.tools",
+        "https://capi.3kh0.net",
+    ]
+    for host in v10_instances:
+        try:
+            headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0",
+            }
+            payload = {
+                "url": clean_url,
+                "videoQuality": q_val,
+                "downloadMode": "audio" if mode == "audio" else "auto",
+                "audioFormat": "mp3",
+            }
+            resp = cffi_requests.post(
+                f"{host}/", json=payload, headers=headers, impersonate="chrome", timeout=6
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("url") and str(data["url"]).startswith("http"):
+                    return data["url"]
+        except Exception:
+            continue
+    return None
+
+
+def get_piped_or_invidious_url(url: str, mode: str, quality: str) -> Optional[str]:
     vid_id = extract_youtube_id(url)
     if not vid_id:
         return None
 
-    mirrors = [
+    piped_hosts = [
         "https://pipedapi.kavin.rocks",
         "https://api.piped.private.coffee",
         "https://pipedapi.adminforge.de",
+        "https://pipedapi.drgns.space",
     ]
-    for host in mirrors:
+    for host in piped_hosts:
         try:
             resp = cffi_requests.get(f"{host}/streams/{vid_id}", impersonate="chrome", timeout=6)
             if resp.status_code != 200:
@@ -510,9 +571,40 @@ def get_piped_stream_url(url: str, mode: str, quality: str) -> Optional[str]:
                     return progs[0]["url"]
         except Exception:
             continue
+
+    invidious_hosts = [
+        "https://inv.tux.pizza",
+        "https://invidious.nerdvpn.de",
+        "https://inv.nadeko.net",
+    ]
+    for host in invidious_hosts:
+        try:
+            resp = cffi_requests.get(f"{host}/api/v1/videos/{vid_id}", impersonate="chrome", timeout=6)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            if mode == "audio":
+                adaptive = data.get("adaptiveFormats") or []
+                audios = [f for f in adaptive if str(f.get("type", "")).startswith("audio/") and f.get("url")]
+                if audios:
+                    return audios[0]["url"]
+            else:
+                fmt_streams = data.get("formatStreams") or []
+                if fmt_streams:
+                    for s in fmt_streams:
+                        if s.get("qualityLabel") == f"{quality}p" and s.get("url"):
+                            return s["url"]
+                    if fmt_streams[0].get("url"):
+                        return fmt_streams[0]["url"]
+        except Exception:
+            continue
+
     return None
 
 
+# =====================================================================
+# 4. LAYER 4: PYTUBEFIX MULTI-CLIENT ENGINE
+# =====================================================================
 def download_youtube_with_pytubefix(
     url: str,
     job_dir: Path,
@@ -521,13 +613,12 @@ def download_youtube_with_pytubefix(
     quality: str,
     is_muted: bool,
 ) -> Optional[Path]:
-    """Downloads YouTube video/audio via pytubefix multi-client engine"""
     try:
         from pytubefix import YouTube
     except Exception:
         return None
 
-    clients = ["ANDROID_VR", "IOS", "MWEB", "WEB_EMBED", "ANDROID", "TV"]
+    clients = ["ANDROID_VR", "IOS", "WEB_CREATOR", "MWEB", "WEB_EMBED", "ANDROID_MUSIC", "TV"]
     for client in clients:
         try:
             yt = YouTube(url, client=client)
@@ -574,7 +665,6 @@ def download_youtube_with_pytubefix(
                     if out_file.exists() and out_file.stat().st_size > 0:
                         return out_file
 
-                # Adaptive video + audio merge
                 vid_stream = (
                     yt.streams.filter(res=target_res, file_extension="mp4").first()
                     or yt.streams.filter(file_extension="mp4").order_by("resolution").desc().first()
@@ -603,7 +693,7 @@ def download_youtube_with_pytubefix(
 
 
 # =====================================================================
-# 4. FFMPEG EXACT CLIP TRIMMER (1s to 5m Precision Cut)
+# 5. FFMPEG EXACT CLIP TRIMMER (1s to 5m Precision Cut)
 # =====================================================================
 def cut_media_segment_exact(
     source_url: str,
@@ -621,13 +711,16 @@ def cut_media_segment_exact(
     if str(source_url).startswith("http"):
         cmd += [
             "-user_agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         ]
 
     cmd += [
-        "-ss", str(start_sec),
-        "-i", str(source_url),
-        "-t", str(clip_duration),
+        "-ss",
+        str(start_sec),
+        "-i",
+        str(source_url),
+        "-t",
+        str(clip_duration),
     ]
 
     if mode == "audio":
@@ -643,10 +736,14 @@ def cut_media_segment_exact(
         if is_muted:
             cmd += ["-an"]
         cmd += [
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "23",
-            "-movflags", "+faststart",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "23",
+            "-movflags",
+            "+faststart",
         ]
         if not is_muted:
             cmd += ["-c:a", "aac", "-b:a", "128k"]
@@ -659,9 +756,12 @@ def cut_media_segment_exact(
     fallback_cmd = [
         "ffmpeg",
         "-y",
-        "-ss", str(start_sec),
-        "-i", str(source_url),
-        "-t", str(clip_duration),
+        "-ss",
+        str(start_sec),
+        "-i",
+        str(source_url),
+        "-t",
+        str(clip_duration),
     ]
     if is_muted and mode == "video":
         fallback_cmd += ["-an", "-c:v", "copy"]
@@ -673,27 +773,22 @@ def cut_media_segment_exact(
 
 
 # =====================================================================
-# 5. UNIVERSAL VIDEO & PHOTO/IMAGE EXTRACTOR (Pinterest, Insta, X, Reddit, FB)
+# 6. UNIVERSAL VIDEO & PHOTO/IMAGE EXTRACTOR (Pinterest, Insta, X, Reddit, FB)
 # =====================================================================
 def extract_direct_media_or_photo_fallback(url: str, job_dir: Path, mode: str) -> Optional[Path]:
-    """
-    Scrapes direct MP4 video OR High-Res Photo/Image (.jpg/.png) from Pinterest,
-    Instagram, Twitter/X, Reddit, Facebook, or Threads when yt-dlp finds no video!
-    """
     try:
         resp = cffi_requests.get(url, impersonate="chrome", timeout=10, allow_redirects=True)
         if resp.status_code != 200 or not resp.text:
             return None
         html = resp.text.replace("\\/", "/")
 
-        # 1. Look for direct MP4 video URLs embedded in page meta or JSON
         video_patterns = [
             r'<meta[^>]+property=["\']og:video(?::secure_url)?["\'][^>]+content=["\']([^"\']+)["\']',
             r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:video(?::secure_url)?["\']',
-            r'(https://v1\.pinimg\.com/videos/[^\s"\'<>]+\.mp4)',
-            r'(https://video\.twimg\.com/[^\s"\'<>]+\.mp4[^\s"\'<>]*)',
-            r'(https://[^\s"\'<>]+\.cdninstagram\.com/[^\s"\'<>]+\.mp4[^\s"\'<>]*)',
-            r'(https://v\.redd\.it/[^\s"\'<>]+/DASH_\d+\.mp4)',
+            r"(https://v1\.pinimg\.com/videos/[^\s\"'<>]+\.mp4)",
+            r"(https://video\.twimg\.com/[^\s\"'<>]+\.mp4[^\s\"'<>]*)",
+            r"(https://[^\s\"'<>]+\.cdninstagram\.com/[^\s\"'<>]+\.mp4[^\s\"'<>]*)",
+            r"(https://v\.redd\.it/[^\s\"'<>]+/DASH_\d+\.mp4)",
         ]
         for pat in video_patterns:
             m = re.search(pat, html, re.I)
@@ -705,13 +800,12 @@ def extract_direct_media_or_photo_fallback(url: str, job_dir: Path, mode: str) -
                     vid_path.write_bytes(v_resp.content)
                     return vid_path
 
-        # 2. If user clicked Download on a Photo/Image Post (Pinterest Pin, Insta/X/Reddit Photo)
         if mode == "video":
             img_patterns = [
-                r'(https://i\.pinimg\.com/originals/[^\s"\'<>]+\.(?:jpg|jpeg|png|webp|gif))',
-                r'(https://i\.pinimg\.com/736x/[^\s"\'<>]+\.(?:jpg|jpeg|png|webp))',
-                r'(https://pbs\.twimg\.com/media/[^\s"\'<>]+)',
-                r'(https://i\.redd\.it/[^\s"\'<>]+\.(?:jpg|jpeg|png|webp|gif))',
+                r"(https://i\.pinimg\.com/originals/[^\s\"'<>]+\.(?:jpg|jpeg|png|webp|gif))",
+                r"(https://i\.pinimg\.com/736x/[^\s\"'<>]+\.(?:jpg|jpeg|png|webp))",
+                r"(https://pbs\.twimg\.com/media/[^\s\"'<>]+)",
+                r"(https://i\.redd\.it/[^\s\"'<>]+\.(?:jpg|jpeg|png|webp|gif))",
                 r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
                 r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
             ]
@@ -719,7 +813,6 @@ def extract_direct_media_or_photo_fallback(url: str, job_dir: Path, mode: str) -
                 m = re.search(pat, html, re.I)
                 if m:
                     img_url = m.group(1).replace("&amp;", "&")
-                    # Upgrade Pinterest 736x to originals if possible
                     if "i.pinimg.com/736x/" in img_url:
                         orig_try = img_url.replace("/736x/", "/originals/")
                         check = cffi_requests.get(orig_try, impersonate="chrome", timeout=8)
@@ -730,7 +823,11 @@ def extract_direct_media_or_photo_fallback(url: str, job_dir: Path, mode: str) -
 
                     i_resp = cffi_requests.get(img_url, impersonate="chrome", timeout=12)
                     if i_resp.status_code == 200 and len(i_resp.content) > 500:
-                        ext = "png" if ".png" in img_url.lower() else ("gif" if ".gif" in img_url.lower() else "jpg")
+                        ext = (
+                            "png"
+                            if ".png" in img_url.lower()
+                            else ("gif" if ".gif" in img_url.lower() else "jpg")
+                        )
                         out_img = job_dir / f"downloaded_photo.{ext}"
                         out_img.write_bytes(i_resp.content)
                         return out_img
@@ -756,18 +853,21 @@ def run_universal_platform_download(
         "--no-warnings",
         "--no-check-certificates",
         "--geo-bypass",
-        "--impersonate", "chrome",
-        "--concurrent-fragments", "8",
-        "-o", raw_template,
+        "--impersonate",
+        "chrome",
+        "--concurrent-fragments",
+        "8",
+        "-o",
+        raw_template,
     ]
     if COOKIES_FILE.exists():
         base_cmd += ["--cookies", str(COOKIES_FILE)]
 
-    # Use updated 2026 yt-dlp client strategies for YouTube instead of broken mweb/tv
+    # Modern 2026 yt-dlp client strategies (NO broken mweb,tv,web_safari!)
     yt_strategies = (
         [
-            ["--extractor-args", "youtube:player_client=default,web_embedded,android_vr"],
-            ["--extractor-args", "youtube:player_client=android_vr,ios;formats=missing_pot"],
+            ["--extractor-args", "youtube:player_client=android_vr,ios,web_embedded;formats=missing_pot"],
+            ["--extractor-args", "youtube:player_client=default,web_creator"],
             [],
         ]
         if is_yt
@@ -776,13 +876,16 @@ def run_universal_platform_download(
 
     last_err = "Media extraction failed"
 
-    for extra_args in yt_strategies:
+    for attempt_idx, extra_args in enumerate(yt_strategies):
         if mode == "audio":
             cmd = base_cmd + extra_args + [
-                "-f", "bestaudio/best",
+                "-f",
+                "bestaudio/best",
                 "-x",
-                "--audio-format", format_type,
-                "--audio-quality", f"{quality}K" if str(quality).isdigit() else "0",
+                "--audio-format",
+                format_type,
+                "--audio-quality",
+                f"{quality}K" if str(quality).isdigit() else "0",
                 url,
             ]
         else:
@@ -797,7 +900,8 @@ def run_universal_platform_download(
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
         if proc.returncode == 0:
             files = [
-                f for f in job_dir.glob("raw_media.*")
+                f
+                for f in job_dir.glob("raw_media.*")
                 if not f.name.endswith(".part") and not f.name.endswith(".ytdl")
             ]
             if files and files[0].stat().st_size > 0:
@@ -812,11 +916,15 @@ def run_universal_platform_download(
                     return muted_out
                 return downloaded_raw
 
-        err_lines = [line for line in (proc.stderr or "").splitlines() if line.strip()]
+        stderr_text = proc.stderr or ""
+        # Self-heal if yt-dlp in Docker layer was outdated
+        if attempt_idx == 0 and "Failed to extract any player response" in stderr_text:
+            force_upgrade_extractors()
+
+        err_lines = [line for line in stderr_text.splitlines() if line.strip()]
         if err_lines:
             last_err = err_lines[-1]
 
-    # Fallback for Non-YouTube Photo Posts / Pinterest Pins / Direct MP4s
     if not is_yt:
         scraped_file = extract_direct_media_or_photo_fallback(url, job_dir, mode)
         if scraped_file and scraped_file.exists():
@@ -834,7 +942,7 @@ def run_universal_platform_download(
 
 
 # =====================================================================
-# 6. BACKGROUND JOB WORKER (4-Layer YouTube + Universal Video/Photo)
+# 7. BACKGROUND JOB WORKER (5-Layer YouTube + Universal Video/Photo)
 # =====================================================================
 def process_download_job(
     job_id: str,
@@ -858,13 +966,18 @@ def process_download_job(
         update_job(job_id, progress=40)
 
         if is_yt:
-            # LAYER 1: Multi-Host Cloud CDN (savenow + oceansaver)
+            # LAYER 1: Multi-Mirror Cloud CDN Cluster (with copyright=0 & api key)
             direct_cdn_url = get_cloud_cdn_direct_link(url, mode, format_type, quality, job_id=job_id)
 
-            # LAYER 2: Public Piped API Stream if Cloud CDN was busy
+            # LAYER 2: Cobalt Cluster
             if not direct_cdn_url:
-                update_job(job_id, progress=65)
-                direct_cdn_url = get_piped_stream_url(url, mode, quality)
+                update_job(job_id, progress=62)
+                direct_cdn_url = get_cobalt_cluster_url(url, mode, quality)
+
+            # LAYER 3: Piped & Invidious Stream Cluster
+            if not direct_cdn_url:
+                update_job(job_id, progress=70)
+                direct_cdn_url = get_piped_or_invidious_url(url, mode, quality)
 
             if direct_cdn_url:
                 if not has_trim and not is_muted:
@@ -887,10 +1000,16 @@ def process_download_job(
                 else:
                     subprocess.run(
                         [
-                            "ffmpeg", "-y",
-                            "-user_agent", "Mozilla/5.0",
-                            "-i", direct_cdn_url,
-                            "-an", "-c:v", "copy", str(out_path),
+                            "ffmpeg",
+                            "-y",
+                            "-user_agent",
+                            "Mozilla/5.0",
+                            "-i",
+                            direct_cdn_url,
+                            "-an",
+                            "-c:v",
+                            "copy",
+                            str(out_path),
                         ],
                         check=True,
                         timeout=60,
@@ -904,15 +1023,15 @@ def process_download_job(
                 )
                 return
 
-            # LAYER 3: pytubefix Multi-Client Engine (ANDROID_VR, IOS, MWEB, WEB_EMBED)
-            update_job(job_id, progress=72)
+            # LAYER 4: pytubefix Multi-Client Engine
+            update_job(job_id, progress=78)
             downloaded_file = download_youtube_with_pytubefix(
                 url, job_dir, mode, format_type, quality, is_muted and not has_trim
             )
 
-            # LAYER 4: yt-dlp 2026 Updated Clients
+            # LAYER 5: Self-Upgraded yt-dlp Nightly Engine
             if not downloaded_file or not downloaded_file.exists():
-                update_job(job_id, progress=80)
+                update_job(job_id, progress=85)
                 downloaded_file = run_universal_platform_download(
                     url, job_dir, mode, format_type, quality, is_muted and not has_trim
                 )
@@ -941,7 +1060,6 @@ def process_download_job(
             url, job_dir, mode, format_type, quality, is_muted and not has_trim
         )
 
-        # Only run video/audio trimmer if the downloaded file is not a static photo
         is_photo = downloaded_file.suffix.lower() in [".jpg", ".jpeg", ".png", ".webp"]
         if has_trim and not is_photo:
             update_job(job_id, progress=88)
@@ -967,7 +1085,7 @@ def process_download_job(
 
 
 # =====================================================================
-# 7. REVIEWS & FEEDBACK STORAGE
+# 8. REVIEWS & FEEDBACK STORAGE
 # =====================================================================
 DEFAULT_FEEDBACK = [
     {
@@ -1013,7 +1131,7 @@ def save_feedback_item(item: dict) -> List[dict]:
 
 
 # =====================================================================
-# 8. API ROUTES
+# 9. API ROUTES
 # =====================================================================
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health_check():
@@ -1076,8 +1194,14 @@ def api_prewarm(
     format_type: str = Form("mp4"),
     quality: str = Form("720"),
 ):
-    # Kept lightweight so background prewarm never rate-limits or blocks the user's real download click!
-    return {"status": "ready_on_click"}
+    if detect_platform_name(url) == "YOUTUBE":
+        threading.Thread(
+            target=get_cloud_cdn_direct_link,
+            args=(url, mode, format_type, quality, None),
+            daemon=True,
+        ).start()
+        return {"status": "warming"}
+    return {"status": "skipped"}
 
 
 @app.post("/api/prepare")
@@ -1119,17 +1243,23 @@ def api_prepare(
         cloud_fmt = (
             (format_type if format_type in ["mp3", "m4a", "wav", "ogg", "opus"] else "mp3")
             if mode == "audio"
-            else ("webm" if format_type == "webm" else (quality if quality in ["1080", "720", "480", "360"] else "720"))
+            else (
+                "webm"
+                if format_type == "webm"
+                else (quality if quality in ["1080", "720", "480", "360"] else "720")
+            )
         )
         cache_key = f"{vid_id or clean_url}:{cloud_fmt}"
         with CACHE_LOCK:
             cached = PREWARM_CACHE.get(cache_key)
             if cached and (time.time() - cached.get("ts", 0) < 1200):
-                return JSONResponse({
-                    "status": "ready",
-                    "download_url": cached["url"],
-                    "filename": final_filename,
-                })
+                return JSONResponse(
+                    {
+                        "status": "ready",
+                        "download_url": cached["url"],
+                        "filename": final_filename,
+                    }
+                )
 
     job_id = str(uuid.uuid4())
     with JOBS_LOCK:
@@ -1148,12 +1278,14 @@ def api_prepare(
         daemon=True,
     ).start()
 
-    return JSONResponse({
-        "status": "processing",
-        "job_id": job_id,
-        "progress": 35,
-        "filename": final_filename,
-    })
+    return JSONResponse(
+        {
+            "status": "processing",
+            "job_id": job_id,
+            "progress": 35,
+            "filename": final_filename,
+        }
+    )
 
 
 @app.get("/api/job_status")
@@ -1194,8 +1326,10 @@ def stream_prepared_file(
         raise HTTPException(status_code=404, detail="File expired.")
 
     preferred = [
-        f for f in job_dir.glob("*")
-        if f.is_file() and (
+        f
+        for f in job_dir.glob("*")
+        if f.is_file()
+        and (
             f.name.startswith("trimmed_")
             or f.name.startswith("muted_")
             or f.name.startswith("final_")
