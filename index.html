@@ -271,7 +271,6 @@
 
         <!-- Expandable Precision Trimmer Controls -->
         <div id="trimmerPanel" class="hidden mt-4 pt-4 border-t border-white/10 space-y-4">
-          <!-- Quick Presets -->
           <div class="flex flex-wrap items-center gap-2">
             <span class="text-[10px] font-bold uppercase text-slate-400 mr-1">Quick Cut Presets:</span>
             <button type="button" onclick="setQuickTrim(0, 5)" class="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-200 border border-slate-700">
@@ -812,13 +811,14 @@
         }
 
         mediaPreviewCard.classList.remove('hidden');
+        prewarmSelection('video');
 
         prewarmBadge.className = 'text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1';
         prewarmBadge.innerHTML = '<i class="fa-solid fa-bolt fa-beat"></i> Pre-loading stream...';
         setTimeout(() => {
           prewarmBadge.className = 'text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1';
           prewarmBadge.innerHTML = '<i class="fa-solid fa-check"></i> Turbo Stream Ready';
-        }, 2200);
+        }, 2000);
 
       } catch (err) {
         showAlert(err.message, true);
@@ -890,19 +890,19 @@
           progressBar.style.width = `${pct}%`;
           progressPercent.textContent = `${pct}%`;
           statusText.innerHTML = `<i class="fa-solid fa-circle-notch spin-fast text-indigo-400 mr-1"></i> ${
-            isTrimActive && pct >= 88
+            isTrimActive && pct >= 85
               ? 'Cutting exact custom clip with FFmpeg...'
               : `Processing high-speed stream (${pct}%)...`
           }`;
 
-          await new Promise(r => setTimeout(r, 600));
+          await new Promise(r => setTimeout(r, 800));
 
           const pollRes = await fetch(
             `${API_BASE}/api/job_status?job_id=${encodeURIComponent(data.job_id)}&filename=${encodeURIComponent(data.filename || '')}`
           );
           if (!pollRes.ok) {
             const errData = await pollRes.json().catch(() => ({}));
-            throw new Error(errData.detail || 'Cloud stream conversion failed.');
+            throw new Error(errData.detail || 'Stream conversion failed.');
           }
           data = await pollRes.json();
         }
@@ -925,7 +925,6 @@
 
       } catch (err) {
         progressSection.classList.add('hidden');
-        // Auto-prefill problem reporter if an error occurs on any link
         document.getElementById('fbType').value = 'issue';
         toggleFeedbackTypeUI();
         document.getElementById('fbUrl').value = url;
@@ -974,9 +973,6 @@
       renderHistory();
     }
 
-    // =====================================================================
-    // USER REVIEWS & ISSUE REPORTER LOGIC
-    // =====================================================================
     function toggleFeedbackTypeUI() {
       const type = document.getElementById('fbType').value;
       const ratingBox = document.getElementById('fbRatingBox');
