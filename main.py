@@ -39,6 +39,15 @@ CACHE_LOCK = threading.Lock()
 JOBS_LOCK = threading.Lock()
 FEEDBACK_LOCK = threading.Lock()
 
+# 5-Minute Keep-Alive Bot State
+BOT_STATE: Dict[str, Any] = {
+    "active": True,
+    "interval_seconds": 300,
+    "pings": 0,
+    "last_ping": "Starting...",
+    "target_url": os.environ.get("RENDER_EXTERNAL_URL", "https://globifree.onrender.com"),
+}
+
 CHROME_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -55,8 +64,45 @@ BLOCKED_AD_DOMAINS = (
 )
 
 
+# =====================================================================
+# STARTUP: AUTO-UPGRADE EXTRACTORS + 5-MINUTE RENDER KEEP-ALIVE BOT
+# =====================================================================
+def keep_alive_bot_loop():
+    """Pings the Render website every 5 minutes (300s) so it never spins down."""
+    time.sleep(5)
+    while True:
+        target_base = (
+            os.environ.get("RENDER_EXTERNAL_URL")
+            or BOT_STATE.get("target_url")
+            or "https://globifree.onrender.com"
+        ).rstrip("/")
+        port = os.environ.get("PORT", "7860")
+
+        # 1. Ping external Render URL so Render proxy registers active inbound traffic
+        for endpoint in (f"{target_base}/health", f"{target_base}/"):
+            try:
+                cffi_requests.get(
+                    endpoint,
+                    headers={"User-Agent": "GlobiFree-KeepAlive-Bot/4.0"},
+                    impersonate="chrome",
+                    timeout=10,
+                )
+            except Exception:
+                pass
+
+        # 2. Also ping local server port
+        try:
+            cffi_requests.get(f"http://127.0.0.1:{port}/health", timeout=5)
+        except Exception:
+            pass
+
+        BOT_STATE["pings"] = int(BOT_STATE.get("pings", 0)) + 1
+        BOT_STATE["last_ping"] = time.strftime("%d %b, %I:%M:%S %p")
+        time.sleep(300)  # Sleep exact 5 minutes
+
+
 @app.on_event("startup")
-def auto_upgrade_extractors():
+def on_startup_tasks():
     def _upgrade():
         try:
             subprocess.run(
@@ -79,11 +125,56 @@ def auto_upgrade_extractors():
             pass
 
     threading.Thread(target=_upgrade, daemon=True).start()
+    threading.Thread(target=keep_alive_bot_loop, daemon=True).start()
 
 
 # =====================================================================
-# HELPER FUNCTIONS
+# HELPER FUNCTIONS (URL CLEANER, HASHTAG EXTRACTOR, VALIDATORS)
 # =====================================================================
+def extract_clean_url(raw_input: Optional[str]) -> str:
+    """Extracts the first valid http/https URL from any messy share text (e.g. Twitch/Instagram share strings)."""
+    text = str(raw_input or "").strip()
+    if not text:
+        return ""
+    m = re.search(r"(https?://[^\s\"'<>]+)", text, re.I)
+    if m:
+        return m.group(1).rstrip(".,;!?)]")
+    return text
+
+
+def extract_hashtags_from_data(*texts_and_lists: Any) -> List[str]:
+    """Extracts and normalizes #hashtags from titles, descriptions, and tag arrays."""
+    found: List[str] = []
+    seen = set()
+
+    def _add_tag(raw_tag: str):
+        clean = re.sub(r"[^\w\u0080-\uffff]", "", str(raw_tag or "").strip())
+        if not clean or len(clean) < 2 or clean.isdigit():
+            return
+        low = clean.lower()
+        if low in ("http", "https", "www", "com", "net", "org", "mp4"):
+            return
+        if low not in seen:
+            seen.add(low)
+            found.append(f"#{clean}")
+
+    for item in texts_and_lists:
+        if not item:
+            continue
+        if isinstance(item, str):
+            for match in re.findall(r"#([\w\u0080-\uffff]+)", item):
+                _add_tag(match)
+        elif isinstance(item, (list, tuple, set)):
+            for sub in item:
+                if isinstance(sub, str):
+                    if "#" in sub:
+                        for match in re.findall(r"#([\w\u0080-\uffff]+)", sub):
+                            _add_tag(match)
+                    else:
+                        _add_tag(sub)
+    return found[:60]
+
+
 def is_safe_media_url(dl_url: Optional[str]) -> bool:
     if not dl_url or not isinstance(dl_url, str) or not dl_url.startswith("http"):
         return False
@@ -206,6 +297,8 @@ def detect_platform_name(url: str) -> str:
         return "INSTAGRAM"
     if "snapchat.com" in u or "snap.com" in u:
         return "SNAPCHAT"
+    if "twitch.tv" in u:
+        return "TWITCH"
     if "facebook.com" in u or "fb.watch" in u or "fb.com" in u:
         return "FACEBOOK"
     if "twitter.com" in u or "x.com" in u or "t.co" in u:
@@ -218,8 +311,6 @@ def detect_platform_name(url: str) -> str:
         return "REDDIT"
     if "vimeo.com" in u:
         return "VIMEO"
-    if "twitch.tv" in u:
-        return "TWITCH"
     if "artstation.com" in u:
         return "ARTSTATION"
     if "behance.net" in u or "be.net" in u:
@@ -245,166 +336,145 @@ def update_job(job_id: Optional[str], **kwargs):
 
 
 # =====================================================================
-# 1. DEDICATED PLATFORM EXTRACTORS
+# 1. DEDICATED PLATFORM EXTRACTORS (Twitch GQL, Instagram Stories/Reels, Snapchat, TikTok, X, ArtStation)
 # =====================================================================
-def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts verified MP4 video and HD thumbnail from Snapchat Spotlight, /@user/spotlight/, /t/, and Stories."""
-    try:
-        resp = cffi_requests.get(
-            url,
-            headers={"User-Agent": CHROME_UA, "Accept-Language": "en-US,en;q=0.9"},
-            impersonate="chrome",
-            allow_redirects=True,
-            timeout=10,
-        )
-        resolved_url = str(resp.url) or url
-        page = resp.text if resp.status_code == 200 else ""
-
-        # If URL is /@username/spotlight/<ID>, also fetch canonical /spotlight/<ID> page
-        spot_m = re.search(r"/spotlight/([A-Za-z0-9_-]+)", resolved_url) or re.search(
-            r"/spotlight/([A-Za-z0-9_-]+)", url
-        )
-        canonical_url = f"https://www.snapchat.com/spotlight/{spot_m.group(1)}" if spot_m else resolved_url
-        if spot_m and "/@" in resolved_url:
-            try:
-                c_resp = cffi_requests.get(
-                    canonical_url,
-                    headers={"User-Agent": CHROME_UA, "Accept-Language": "en-US,en;q=0.9"},
-                    impersonate="chrome",
-                    allow_redirects=True,
-                    timeout=8,
-                )
-                if c_resp.status_code == 200 and "__NEXT_DATA__" in c_resp.text:
-                    page = c_resp.text
-            except Exception:
-                pass
-
-        title = "Snapchat Spotlight Video"
-        uploader = "Snapchat Creator"
-        thumb_url = ""
-        video_url = None
-        duration = 0
-        candidate_videos: List[str] = []
-
-        # Method A: Check <script type="application/ld+json"> for VideoObject.contentUrl
-        ld_blocks = re.findall(
-            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', page, re.S | re.I
-        )
-        for block in ld_blocks:
-            try:
-                ld_data = json.loads(block.strip())
-                items = ld_data if isinstance(ld_data, list) else [ld_data]
-                for item in items:
-                    if isinstance(item, dict) and item.get("@type") == "VideoObject":
-                        if item.get("contentUrl"):
-                            candidate_videos.append(item["contentUrl"])
-                        if item.get("thumbnailUrl"):
-                            t_val = item["thumbnailUrl"]
-                            thumb_url = t_val[0] if isinstance(t_val, list) and t_val else str(t_val)
-                        if item.get("name") or item.get("description"):
-                            title = item.get("name") or item.get("description")
-                        creator = item.get("creator") or item.get("author") or {}
-                        if isinstance(creator, dict) and creator.get("name"):
-                            uploader = creator["name"]
-            except Exception:
-                pass
-
-        # Method B: Parse __NEXT_DATA__ JSON tree
-        next_m = re.search(
-            r'<script id="__NEXT_DATA__" type="application/json"[^>]*>(.*?)</script>',
-            page,
-            re.S,
-        )
-        if next_m:
-            try:
-                next_json = json.loads(next_m.group(1))
-                page_props = (next_json.get("props") or {}).get("pageProps") or {}
-
-                vid_meta = page_props.get("videoMetadata") or {}
-                if isinstance(vid_meta, dict):
-                    if vid_meta.get("contentUrl"):
-                        candidate_videos.insert(0, vid_meta["contentUrl"])
-                    if vid_meta.get("thumbnailUrl") and not thumb_url:
-                        thumb_url = vid_meta["thumbnailUrl"]
-                    if vid_meta.get("name") or vid_meta.get("description"):
-                        title = vid_meta.get("name") or vid_meta.get("description") or title
-                    creator_obj = vid_meta.get("creator") or {}
-                    if isinstance(creator_obj, dict) and creator_obj.get("name"):
-                        uploader = creator_obj["name"]
-
-                # Recursive walker to find snapMediaType == 1 (Video) & snapUrls.mediaUrl
-                def _walk_snap(obj: Any):
-                    if isinstance(obj, dict):
-                        # Snapchat snapMediaType: 1 is VIDEO, 0 is IMAGE
-                        snap_urls = obj.get("snapUrls")
-                        if isinstance(snap_urls, dict) and snap_urls.get("mediaUrl"):
-                            if obj.get("snapMediaType") == 1:
-                                candidate_videos.insert(0, snap_urls["mediaUrl"])
-                            else:
-                                candidate_videos.append(snap_urls["mediaUrl"])
-                            prev_u = snap_urls.get("mediaPreviewUrl")
-                            if isinstance(prev_u, dict) and prev_u.get("value") and not None:
-                                nonlocal thumb_url
-                                if not thumb_url:
-                                    thumb_url = prev_u["value"]
-                        for k, v in obj.items():
-                            if k in ("contentUrl", "videoUrl", "mediaUrl") and isinstance(v, str) and v.startswith("http"):
-                                candidate_videos.append(v)
-                            else:
-                                _walk_snap(v)
-                    elif isinstance(obj, list):
-                        for elem in obj:
-                            _walk_snap(elem)
-
-                _walk_snap(page_props)
-            except Exception:
-                pass
-
-        # Method C: Check HTML <video> or <link rel="preload" as="video"> or og:video
-        for pat in (
-            r'<link[^>]+rel=["\']preload["\'][^>]+as=["\']video["\'][^>]+href=["\']([^"\']+)["\']',
-            r'<meta[^>]+property=["\']og:video(?::secure_url|:url)?["\'][^>]+content=["\']([^"\']+)["\']',
-            r'<video[^>]+src=["\'](https?://[^"\']+)["\']',
-        ):
-            m_vid = re.search(pat, page, re.I)
-            if m_vid:
-                candidate_videos.append(html.unescape(m_vid.group(1)))
-
-        if not thumb_url:
-            og_i = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', page, re.I)
-            if og_i:
-                thumb_url = html.unescape(og_i.group(1))
-
-        og_t = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']', page, re.I)
-        if og_t and title == "Snapchat Spotlight Video":
-            title = html.unescape(og_t.group(1)).strip()
-
-        # Deduplicate & strictly verify which candidate URL is an ACTUAL video stream!
-        seen = set()
-        for cand in candidate_videos:
-            clean_c = cand.replace("\\u0026", "&").replace("\\/", "/")
-            if clean_c in seen:
-                continue
-            seen.add(clean_c)
-            if is_url_actual_video(clean_c, referer="https://www.snapchat.com/"):
-                video_url = clean_c
-                break
-
-        return {
-            "title": title[:90],
-            "uploader": uploader,
-            "duration": duration,
-            "thumbnail": thumb_url,
-            "video_url": video_url,
-            "image_url": thumb_url if is_safe_media_url(thumb_url) else None,
-            "canonical_url": canonical_url,
-        }
-    except Exception:
+def extract_twitch_clip(url: str) -> Optional[Dict[str, Any]]:
+    """Extracts Twitch Clips directly via Twitch GQL API with signed MP4 URLs."""
+    m = re.search(r"(?:twitch\.tv/[^/]+/clip/|clips\.twitch\.tv/)([A-Za-z0-9_-]+)", url)
+    if not m:
         return None
+    slug = m.group(1)
+    try:
+        headers = {
+            "Client-ID": "kimne78kx3ncx6brgo4mv6wki5h1ko",
+            "Content-Type": "application/json",
+            "User-Agent": CHROME_UA,
+        }
+        # Query 1: Get direct videoQualities + playbackAccessToken
+        gql_payload = [
+            {
+                "operationName": "VideoAccessToken_Clip",
+                "variables": {"slug": slug},
+                "extensions": {
+                    "persistedQuery": {
+                        "version": 1,
+                        "sha256Hash": "36b89d2507fce29e5ca551df756d27c1cfe079e2609642b4390aa4c35796eb11",
+                    }
+                },
+            },
+            {
+                "query": (
+                    "query($slug: ID!) { clip(slug: $slug) { title durationSeconds thumbnailURL "
+                    "broadcaster { displayName login } game { displayName } } }"
+                ),
+                "variables": {"slug": slug},
+            },
+        ]
+        resp = cffi_requests.post(
+            "https://gql.twitch.tv/gql", json=gql_payload, headers=headers, impersonate="chrome", timeout=8
+        )
+        if resp.status_code == 200:
+            results = resp.json()
+            if isinstance(results, list) and len(results) >= 1:
+                clip_token_data = ((results[0].get("data") or {}).get("clip")) or {}
+                clip_meta = ((results[1].get("data") or {}).get("clip")) if len(results) > 1 else {}
+                clip_meta = clip_meta or {}
+
+                token_obj = clip_token_data.get("playbackAccessToken") or {}
+                sig = token_obj.get("signature")
+                token_val = token_obj.get("value")
+                qualities = clip_token_data.get("videoQualities") or []
+
+                video_url = None
+                if qualities and sig and token_val:
+                    # Sort highest quality first
+                    qualities.sort(key=lambda q: int(q.get("quality") or 0), reverse=True)
+                    base_src = qualities[0].get("sourceURL")
+                    if base_src:
+                        video_url = f"{base_src}?sig={sig}&token={quote(token_val)}"
+
+                title = clip_meta.get("title") or f"Twitch Clip {slug}"
+                broadcaster = (clip_meta.get("broadcaster") or {}).get("displayName") or "Twitch Streamer"
+                game_name = (clip_meta.get("game") or {}).get("displayName") or ""
+                duration = clip_meta.get("durationSeconds") or 0
+                thumb = clip_meta.get("thumbnailURL") or ""
+                tags = extract_hashtags_from_data(title, [game_name, broadcaster, "TwitchClip"])
+
+                if video_url or thumb:
+                    return {
+                        "title": title,
+                        "uploader": broadcaster,
+                        "duration": duration,
+                        "thumbnail": thumb,
+                        "video_url": video_url,
+                        "image_url": thumb,
+                        "hashtags": tags,
+                    }
+    except Exception:
+        pass
+    return None
 
 
 def extract_instagram_media(url: str) -> Optional[Dict[str, Any]]:
-    """Multi-layer Instagram Reels/Posts/Stories extractor."""
+    """Multi-layer Instagram Reels, Stories, Highlights & Posts extractor."""
+    # Check if Instagram Story link: instagram.com/stories/<username>/<story_id>
+    story_m = re.search(r"instagram\.com/stories/([^/?#]+)(?:/(\d+))?", url)
+    if story_m:
+        username = story_m.group(1)
+        story_id = story_m.group(2) or ""
+        story_path = f"stories/{username}/{story_id}".rstrip("/")
+
+        # Layer S1: Try vxinstagram / ddinstagram for public stories
+        for api_host in ("https://api.vxinstagram.com", "https://d.ddinstagram.com"):
+            try:
+                resp = cffi_requests.get(f"{api_host}/{story_path}", impersonate="chrome", timeout=7)
+                if resp.status_code == 200 and "application/json" in (resp.headers.get("content-type") or ""):
+                    data = resp.json()
+                    media_list = data.get("media_extended") or data.get("mediaURLs") or []
+                    video_url = None
+                    thumb_url = ""
+                    for item in media_list:
+                        if isinstance(item, dict):
+                            u_cand = item.get("url")
+                            if item.get("type") == "video" or (u_cand and ".mp4" in u_cand):
+                                video_url = u_cand
+                            if item.get("thumbnail_url") and not thumb_url:
+                                thumb_url = item.get("thumbnail_url")
+                            elif u_cand and not thumb_url:
+                                thumb_url = u_cand
+                        elif isinstance(item, str):
+                            if ".mp4" in item:
+                                video_url = item
+                            elif not thumb_url:
+                                thumb_url = item
+                    caption = data.get("text") or ""
+                    if video_url or thumb_url:
+                        return {
+                            "title": (caption or f"Instagram_Story_{username}")[:80],
+                            "uploader": data.get("user_name") or username,
+                            "duration": 0,
+                            "thumbnail": thumb_url,
+                            "video_url": video_url if is_safe_media_url(video_url) else None,
+                            "image_url": thumb_url if is_safe_media_url(thumb_url) else None,
+                            "hashtags": extract_hashtags_from_data(caption),
+                        }
+            except Exception:
+                pass
+
+        # Layer S2: Try Cobalt direct tunnel for Instagram Story
+        cobalt_dl = fetch_from_cobalt_instances(url, "video", "1080")
+        if cobalt_dl:
+            return {
+                "title": f"Instagram_Story_{username}",
+                "uploader": f"@{username}",
+                "duration": 0,
+                "thumbnail": "",
+                "video_url": cobalt_dl,
+                "image_url": None,
+                "hashtags": [],
+            }
+
+    # Standard Reels / Posts / TV
     m = re.search(r"instagram\.com/(?:[^/]+/)?(?:reel|reels|p|tv)/([A-Za-z0-9_-]+)", url)
     shortcode = m.group(1) if m else None
 
@@ -428,14 +498,16 @@ def extract_instagram_media(url: str) -> Optional[Dict[str, Any]]:
                                 thumb_url = u_cand
                         elif isinstance(item, str) and ".mp4" in item:
                             video_url = item
+                    caption = data.get("text") or ""
                     if video_url or thumb_url:
                         return {
-                            "title": (data.get("text") or f"Instagram_{shortcode}")[:80],
+                            "title": (caption or f"Instagram_{shortcode}")[:80],
                             "uploader": data.get("user_name") or "Instagram Creator",
                             "duration": 0,
                             "thumbnail": thumb_url,
                             "video_url": video_url if is_safe_media_url(video_url) else None,
                             "image_url": thumb_url if is_safe_media_url(thumb_url) else None,
+                            "hashtags": extract_hashtags_from_data(caption),
                         }
             except Exception:
                 pass
@@ -467,6 +539,8 @@ def extract_instagram_media(url: str) -> Optional[Dict[str, Any]]:
                         thumb_url = html.unescape(img_m.group(1))
                 user_m = re.search(r'class="UsernameText"[^>]*>([^<]+)<', page)
                 uploader = user_m.group(1).strip() if user_m else "Instagram Creator"
+                cap_m = re.search(r'class="Caption"[^>]*>(.*?)</div>', page, re.S)
+                caption_text = re.sub(r"<[^>]+>", " ", html.unescape(cap_m.group(1))) if cap_m else ""
                 if video_url or thumb_url:
                     return {
                         "title": f"Instagram_{shortcode}",
@@ -475,6 +549,7 @@ def extract_instagram_media(url: str) -> Optional[Dict[str, Any]]:
                         "thumbnail": thumb_url,
                         "video_url": video_url if is_safe_media_url(video_url) else None,
                         "image_url": thumb_url if is_safe_media_url(thumb_url) else None,
+                        "hashtags": extract_hashtags_from_data(caption_text),
                     }
         except Exception:
             pass
@@ -482,8 +557,164 @@ def extract_instagram_media(url: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
+    """Extracts verified MP4 video, HD thumbnail & hashtags from Snapchat Spotlight and Stories."""
+    try:
+        resp = cffi_requests.get(
+            url,
+            headers={"User-Agent": CHROME_UA, "Accept-Language": "en-US,en;q=0.9"},
+            impersonate="chrome",
+            allow_redirects=True,
+            timeout=10,
+        )
+        resolved_url = str(resp.url) or url
+        page = resp.text if resp.status_code == 200 else ""
+
+        spot_m = re.search(r"/spotlight/([A-Za-z0-9_-]+)", resolved_url) or re.search(
+            r"/spotlight/([A-Za-z0-9_-]+)", url
+        )
+        canonical_url = f"https://www.snapchat.com/spotlight/{spot_m.group(1)}" if spot_m else resolved_url
+        if spot_m and "/@" in resolved_url:
+            try:
+                c_resp = cffi_requests.get(
+                    canonical_url,
+                    headers={"User-Agent": CHROME_UA, "Accept-Language": "en-US,en;q=0.9"},
+                    impersonate="chrome",
+                    allow_redirects=True,
+                    timeout=8,
+                )
+                if c_resp.status_code == 200 and "__NEXT_DATA__" in c_resp.text:
+                    page = c_resp.text
+            except Exception:
+                pass
+
+        title = "Snapchat Spotlight Video"
+        description_text = ""
+        uploader = "Snapchat Creator"
+        thumb_url = ""
+        video_url = None
+        duration = 0
+        candidate_videos: List[str] = []
+
+        ld_blocks = re.findall(
+            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', page, re.S | re.I
+        )
+        for block in ld_blocks:
+            try:
+                ld_data = json.loads(block.strip())
+                items = ld_data if isinstance(ld_data, list) else [ld_data]
+                for item in items:
+                    if isinstance(item, dict) and item.get("@type") == "VideoObject":
+                        if item.get("contentUrl"):
+                            candidate_videos.append(item["contentUrl"])
+                        if item.get("thumbnailUrl"):
+                            t_val = item["thumbnailUrl"]
+                            thumb_url = t_val[0] if isinstance(t_val, list) and t_val else str(t_val)
+                        if item.get("name") or item.get("description"):
+                            title = item.get("name") or item.get("description")
+                            description_text += " " + str(item.get("description") or "")
+                        creator = item.get("creator") or item.get("author") or {}
+                        if isinstance(creator, dict) and creator.get("name"):
+                            uploader = creator["name"]
+            except Exception:
+                pass
+
+        next_m = re.search(
+            r'<script id="__NEXT_DATA__" type="application/json"[^>]*>(.*?)</script>',
+            page,
+            re.S,
+        )
+        if next_m:
+            try:
+                next_json = json.loads(next_m.group(1))
+                page_props = (next_json.get("props") or {}).get("pageProps") or {}
+
+                vid_meta = page_props.get("videoMetadata") or {}
+                if isinstance(vid_meta, dict):
+                    if vid_meta.get("contentUrl"):
+                        candidate_videos.insert(0, vid_meta["contentUrl"])
+                    if vid_meta.get("thumbnailUrl") and not thumb_url:
+                        thumb_url = vid_meta["thumbnailUrl"]
+                    if vid_meta.get("name") or vid_meta.get("description"):
+                        title = vid_meta.get("name") or vid_meta.get("description") or title
+                        description_text += " " + str(vid_meta.get("description") or "")
+                    creator_obj = vid_meta.get("creator") or {}
+                    if isinstance(creator_obj, dict) and creator_obj.get("name"):
+                        uploader = creator_obj["name"]
+
+                def _walk_snap(obj: Any):
+                    if isinstance(obj, dict):
+                        snap_urls = obj.get("snapUrls")
+                        if isinstance(snap_urls, dict) and snap_urls.get("mediaUrl"):
+                            if obj.get("snapMediaType") == 1:
+                                candidate_videos.insert(0, snap_urls["mediaUrl"])
+                            else:
+                                candidate_videos.append(snap_urls["mediaUrl"])
+                            prev_u = snap_urls.get("mediaPreviewUrl")
+                            if isinstance(prev_u, dict) and prev_u.get("value"):
+                                nonlocal thumb_url
+                                if not thumb_url:
+                                    thumb_url = prev_u["value"]
+                        for k, v in obj.items():
+                            if k in ("contentUrl", "videoUrl", "mediaUrl") and isinstance(v, str) and v.startswith("http"):
+                                candidate_videos.append(v)
+                            elif k in ("title", "description", " hashtags") and isinstance(v, str):
+                                nonlocal description_text
+                                description_text += " " + v
+                            else:
+                                _walk_snap(v)
+                    elif isinstance(obj, list):
+                        for elem in obj:
+                            _walk_snap(elem)
+
+                _walk_snap(page_props)
+            except Exception:
+                pass
+
+        for pat in (
+            r'<link[^>]+rel=["\']preload["\'][^>]+as=["\']video["\'][^>]+href=["\']([^"\']+)["\']',
+            r'<meta[^>]+property=["\']og:video(?::secure_url|:url)?["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<video[^>]+src=["\'](https?://[^"\']+)["\']',
+        ):
+            m_vid = re.search(pat, page, re.I)
+            if m_vid:
+                candidate_videos.append(html.unescape(m_vid.group(1)))
+
+        if not thumb_url:
+            og_i = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', page, re.I)
+            if og_i:
+                thumb_url = html.unescape(og_i.group(1))
+
+        og_t = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']', page, re.I)
+        if og_t and title == "Snapchat Spotlight Video":
+            title = html.unescape(og_t.group(1)).strip()
+
+        seen = set()
+        for cand in candidate_videos:
+            clean_c = cand.replace("\\u0026", "&").replace("\\/", "/")
+            if clean_c in seen:
+                continue
+            seen.add(clean_c)
+            if is_url_actual_video(clean_c, referer="https://www.snapchat.com/"):
+                video_url = clean_c
+                break
+
+        return {
+            "title": title[:90],
+            "uploader": uploader,
+            "duration": duration,
+            "thumbnail": thumb_url,
+            "video_url": video_url,
+            "image_url": thumb_url if is_safe_media_url(thumb_url) else None,
+            "canonical_url": canonical_url,
+            "hashtags": extract_hashtags_from_data(title, description_text),
+        }
+    except Exception:
+        return None
+
+
 def extract_tiktok_no_watermark(url: str) -> Optional[Dict[str, Any]]:
-    """Fetches TikTok HD No-Watermark video & metadata via TikWM API."""
+    """Fetches TikTok HD No-Watermark video, metadata & hashtags via TikWM API."""
     try:
         resp = cffi_requests.post(
             "https://www.tikwm.com/api/",
@@ -497,14 +728,16 @@ def extract_tiktok_no_watermark(url: str) -> Optional[Dict[str, Any]]:
             video_url = data.get("hdplay") or data.get("play")
             if video_url and not str(video_url).startswith("http"):
                 video_url = f"https://www.tikwm.com{video_url}"
+            raw_title = data.get("title") or "TikTok Video"
             if is_safe_media_url(video_url):
                 return {
-                    "title": data.get("title") or "TikTok Video",
+                    "title": raw_title,
                     "uploader": (data.get("author") or {}).get("nickname") or "TikTok Creator",
                     "duration": data.get("duration") or 0,
                     "thumbnail": data.get("origin_cover") or data.get("cover") or "",
                     "video_url": video_url,
                     "audio_url": data.get("music") or video_url,
+                    "hashtags": extract_hashtags_from_data(raw_title),
                 }
     except Exception:
         pass
@@ -512,7 +745,7 @@ def extract_tiktok_no_watermark(url: str) -> Optional[Dict[str, Any]]:
 
 
 def extract_twitter_x_api(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts X/Twitter videos & GIFs via fxtwitter API."""
+    """Extracts X/Twitter videos, GIFs & hashtags via fxtwitter API."""
     try:
         m = re.search(r"(?:twitter\.com|x\.com)/([^/?#]+)/status/(\d+)", url)
         if not m:
@@ -531,14 +764,16 @@ def extract_twitter_x_api(url: str) -> Optional[Dict[str, Any]]:
                 if videos
                 else (photos[0].get("url") if photos else "")
             )
+            full_text = tweet.get("text") or f"X Post {status_id}"
             if video_url or thumb:
                 return {
-                    "title": (tweet.get("text") or f"X Post {status_id}")[:90],
+                    "title": full_text[:90],
                     "uploader": (tweet.get("author") or {}).get("name") or user,
                     "duration": videos[0].get("duration", 0) if videos else 0,
                     "thumbnail": thumb,
                     "video_url": video_url,
                     "image_url": photos[0].get("url") if photos else thumb,
+                    "hashtags": extract_hashtags_from_data(full_text),
                 }
     except Exception:
         pass
@@ -546,7 +781,7 @@ def extract_twitter_x_api(url: str) -> Optional[Dict[str, Any]]:
 
 
 def extract_artstation_project(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts high-res 3D shorts, turntable videos & 4K artworks from ArtStation."""
+    """Extracts high-res 3D shorts, turntable videos, 4K artworks & tags from ArtStation."""
     try:
         m = re.search(r"artstation\.com/(?:artwork|projects)/([a-zA-Z0-9_-]+)", url)
         if not m:
@@ -593,6 +828,7 @@ def extract_artstation_project(url: str) -> Optional[Dict[str, Any]]:
             "video_url": video_url,
             "embed_url": embed_url,
             "image_url": best_image,
+            "hashtags": extract_hashtags_from_data(data.get("description"), data.get("tags")),
         }
     except Exception:
         pass
@@ -600,7 +836,7 @@ def extract_artstation_project(url: str) -> Optional[Dict[str, Any]]:
 
 
 def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, Any]]:
-    """Extracts high-res videos/photos from Behance, Flickr, 500px, Pinterest, or OpenGraph pages."""
+    """Extracts high-res videos/photos & hashtags from Behance, Flickr, 500px, Pinterest, or OpenGraph pages."""
     try:
         headers = {
             "User-Agent": CHROME_UA,
@@ -616,6 +852,12 @@ def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, 
         if not title_match:
             title_match = re.search(r"<title>([^<]+)</title>", page, re.I)
         title = html.unescape(title_match.group(1)).strip() if title_match else f"{platform.title()} Media"
+
+        desc_match = re.search(r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']', page, re.I)
+        desc_text = html.unescape(desc_match.group(1)) if desc_match else ""
+
+        kw_match = re.search(r'<meta[^>]+name=["\']keywords["\'][^>]+content=["\']([^"\']+)["\']', page, re.I)
+        kw_list = [k.strip() for k in html.unescape(kw_match.group(1)).split(",")] if kw_match else []
 
         og_img_match = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', page, re.I)
         best_img = html.unescape(og_img_match.group(1)) if og_img_match else ""
@@ -664,7 +906,7 @@ def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, 
                 px_id = px_id_match.group(1)
                 try:
                     api_px = cffi_requests.get(
-                        f"https://api.500px.com/v1/photos?ids={px_id}&image_size[]=2048&image_size[]=1600&image_size[]=1080",
+                        f"https://api.500px.com/v1/photos?ids={px_id}&image_size[]=2048&image_size[]=1600&image_size[]=1080&tags=1",
                         impersonate="chrome",
                         timeout=6,
                     )
@@ -673,6 +915,8 @@ def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, 
                         p_obj = photos_dict.get(px_id) or {}
                         if p_obj.get("name"):
                             title = p_obj["name"]
+                        if p_obj.get("tags"):
+                            kw_list.extend(p_obj.get("tags") or [])
                         imgs_list = p_obj.get("images") or []
                         if imgs_list:
                             imgs_list.sort(key=lambda x: x.get("size", 0), reverse=True)
@@ -692,6 +936,7 @@ def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, 
                 "thumbnail": best_img,
                 "video_url": video_url if is_safe_media_url(video_url) else None,
                 "image_url": best_img if is_safe_media_url(best_img) else None,
+                "hashtags": extract_hashtags_from_data(title, desc_text, kw_list),
             }
     except Exception:
         pass
@@ -699,7 +944,7 @@ def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, 
 
 
 def fetch_from_cobalt_instances(url: str, mode: str, quality: str) -> Optional[str]:
-    """Queries Cobalt v10 instances for fast direct streams."""
+    """Queries Cobalt v10 instances for fast direct streams (Instagram Stories/Reels, TikTok, Reddit, Twitch, etc.)."""
     q_val = quality if quality in ["1080", "720", "480", "360"] else "1080"
     cobalt_hosts = [
         "https://cobalt-api.kwiatekmiki.com",
@@ -737,9 +982,12 @@ def fetch_from_cobalt_instances(url: str, mode: str, quality: str) -> Optional[s
 
 
 # =====================================================================
-# 2. FAST INFO FETCH
+# 2. FAST INFO FETCH (WITH UNIVERSAL HASHTAG EXTRACTOR)
 # =====================================================================
-def fast_fetch_info(url: str) -> dict:
+def fast_fetch_info(raw_url: str) -> dict:
+    url = extract_clean_url(raw_url)
+    if not url:
+        raise HTTPException(status_code=400, detail="Valid URL is required.")
     if is_blocked_platform(url):
         raise HTTPException(status_code=400, detail="This platform is not supported.")
 
@@ -751,6 +999,24 @@ def fast_fetch_info(url: str) -> dict:
         if cached_info and (time.time() - cached_info.get("_ts", 0) < 1800):
             return {k: v for k, v in cached_info.items() if k != "_ts"}
 
+    if platform == "TWITCH":
+        tw_clip = extract_twitch_clip(url)
+        if tw_clip:
+            result = {
+                "title": tw_clip["title"],
+                "uploader": tw_clip["uploader"],
+                "duration": tw_clip["duration"],
+                "duration_string": format_duration(tw_clip["duration"]),
+                "thumbnail": tw_clip["thumbnail"],
+                "hd_thumbnail": tw_clip["image_url"] or tw_clip["thumbnail"],
+                "platform": platform,
+                "max_quality": "1080P CLIP",
+                "hashtags": tw_clip.get("hashtags") or [],
+            }
+            with CACHE_LOCK:
+                INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
+            return result
+
     if platform == "INSTAGRAM":
         ig = extract_instagram_media(url)
         if ig:
@@ -758,11 +1024,12 @@ def fast_fetch_info(url: str) -> dict:
                 "title": ig["title"],
                 "uploader": ig["uploader"],
                 "duration": 0,
-                "duration_string": "Reel / Post HD",
+                "duration_string": "Story / Reel HD",
                 "thumbnail": ig["thumbnail"],
                 "hd_thumbnail": ig["image_url"] or ig["thumbnail"],
                 "platform": platform,
                 "max_quality": "1080P HD",
+                "hashtags": ig.get("hashtags") or [],
             }
             with CACHE_LOCK:
                 INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
@@ -780,6 +1047,7 @@ def fast_fetch_info(url: str) -> dict:
                 "hd_thumbnail": sc["image_url"] or sc["thumbnail"],
                 "platform": platform,
                 "max_quality": "HD VIDEO",
+                "hashtags": sc.get("hashtags") or [],
             }
             with CACHE_LOCK:
                 INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
@@ -797,6 +1065,7 @@ def fast_fetch_info(url: str) -> dict:
                 "hd_thumbnail": tk["thumbnail"],
                 "platform": platform,
                 "max_quality": "NO WATERMARK HD",
+                "hashtags": tk.get("hashtags") or [],
             }
             with CACHE_LOCK:
                 INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
@@ -814,6 +1083,7 @@ def fast_fetch_info(url: str) -> dict:
                 "hd_thumbnail": tw.get("image_url") or tw["thumbnail"],
                 "platform": platform,
                 "max_quality": "HD READY",
+                "hashtags": tw.get("hashtags") or [],
             }
             with CACHE_LOCK:
                 INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
@@ -831,6 +1101,7 @@ def fast_fetch_info(url: str) -> dict:
                 "hd_thumbnail": art["image_url"] or art["thumbnail"],
                 "platform": platform,
                 "max_quality": "4K READY",
+                "hashtags": art.get("hashtags") or [],
             }
             with CACHE_LOCK:
                 INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
@@ -848,6 +1119,7 @@ def fast_fetch_info(url: str) -> dict:
                 "hd_thumbnail": scraped.get("image_url") or scraped.get("thumbnail") or "",
                 "platform": platform,
                 "max_quality": "HIGH-RES",
+                "hashtags": scraped.get("hashtags") or [],
             }
             with CACHE_LOCK:
                 INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
@@ -875,6 +1147,12 @@ def fast_fetch_info(url: str) -> dict:
             info = json.loads(proc.stdout.splitlines()[0])
             duration = info.get("duration") or 0
             thumb = info.get("thumbnail") or ""
+            tags = extract_hashtags_from_data(
+                info.get("title"),
+                info.get("description"),
+                info.get("tags"),
+                info.get("categories"),
+            )
             result = {
                 "title": info.get("title") or f"{platform.title()} Media",
                 "uploader": info.get("uploader") or info.get("channel") or platform.title(),
@@ -884,6 +1162,7 @@ def fast_fetch_info(url: str) -> dict:
                 "hd_thumbnail": thumb,
                 "platform": platform,
                 "max_quality": "HD READY",
+                "hashtags": tags,
             }
             with CACHE_LOCK:
                 INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
@@ -902,6 +1181,7 @@ def fast_fetch_info(url: str) -> dict:
             "hd_thumbnail": scraped.get("image_url") or scraped.get("thumbnail") or "",
             "platform": platform,
             "max_quality": "HD READY",
+            "hashtags": scraped.get("hashtags") or [],
         }
 
     return {
@@ -913,6 +1193,7 @@ def fast_fetch_info(url: str) -> dict:
         "hd_thumbnail": "",
         "platform": platform,
         "max_quality": "HD READY",
+        "hashtags": [],
     }
 
 
@@ -938,7 +1219,6 @@ def download_direct_url_to_file(
             return None
 
         ctype = (resp.headers.get("content-type") or "").lower()
-        # Strictly reject static images or HTML pages when user clicked Video or Audio Download!
         if "image/" in ctype or "text/html" in ctype:
             return None
 
@@ -1045,7 +1325,7 @@ def download_with_ytdlp(
 
 
 def download_with_gallery_dl_video(url: str, job_dir: Path) -> Optional[Path]:
-    """Fallback using gallery-dl that only returns video files for the Video Download bar."""
+    """Fallback using gallery-dl that returns video files for the Video Download bar."""
     gdl_dir = job_dir / "gdl"
     gdl_dir.mkdir(parents=True, exist_ok=True)
     cmd = ["gallery-dl", "--no-mtime", "--range", "1", "-D", str(gdl_dir)]
@@ -1067,16 +1347,27 @@ def download_with_gallery_dl_video(url: str, job_dir: Path) -> Optional[Path]:
 
 
 def download_universal_media(
-    url: str,
+    raw_url: str,
     job_dir: Path,
     mode: str,
     format_type: str,
     quality: str,
     is_muted: bool,
 ) -> Path:
+    url = extract_clean_url(raw_url)
     platform = detect_platform_name(url)
 
-    # 1. Snapchat Verified Video Engine (Handles /@user/spotlight/, /spotlight/, /t/, Stories)
+    # 1. Twitch Clip & VOD Engine (GQL Direct MP4 + yt-dlp fallback)
+    if platform == "TWITCH":
+        tw_clip = extract_twitch_clip(url)
+        if tw_clip and tw_clip.get("video_url"):
+            res = download_direct_url_to_file(
+                tw_clip["video_url"], job_dir, mode, format_type, quality, is_muted, referer="https://www.twitch.tv/"
+            )
+            if res:
+                return res
+
+    # 2. Snapchat Verified Video Engine (Handles /@user/spotlight/, /spotlight/, /t/, Stories)
     if platform == "SNAPCHAT":
         sc = extract_snapchat_media(url)
         if sc:
@@ -1099,7 +1390,7 @@ def download_universal_media(
                 if res:
                     return res
 
-    # 2. Instagram Video Engine
+    # 3. Instagram Reels, Stories & Posts Video Engine
     if platform == "INSTAGRAM":
         ig = extract_instagram_media(url)
         if ig and ig.get("video_url"):
@@ -1109,7 +1400,7 @@ def download_universal_media(
             if res:
                 return res
 
-    # 3. TikTok No-Watermark Fast Engine
+    # 4. TikTok No-Watermark Fast Engine
     if platform == "TIKTOK":
         tk = extract_tiktok_no_watermark(url)
         if tk:
@@ -1118,7 +1409,7 @@ def download_universal_media(
             if res:
                 return res
 
-    # 4. X (Twitter) Video & GIF Engine
+    # 5. X (Twitter) Video & GIF Engine
     if platform == "X / TWITTER":
         tw = extract_twitter_x_api(url)
         if tw and tw.get("video_url"):
@@ -1126,7 +1417,7 @@ def download_universal_media(
             if res:
                 return res
 
-    # 5. ArtStation 3D Shorts Engine
+    # 6. ArtStation 3D Shorts Engine
     if platform == "ARTSTATION":
         art = extract_artstation_project(url)
         if art:
@@ -1155,7 +1446,7 @@ def download_universal_media(
                 if res:
                     return res
 
-    # 6. Vimeo Creator-Restricted & Embedded Videos Engine
+    # 7. Vimeo Creator-Restricted & Embedded Videos Engine
     if platform == "VIMEO":
         res = download_with_ytdlp(
             url, job_dir, mode, format_type, quality, is_muted, referer="https://vimeo.com/"
@@ -1177,19 +1468,19 @@ def download_universal_media(
             if res:
                 return res
 
-    # 7. Primary yt-dlp Engine
+    # 8. Primary yt-dlp Engine
     res = download_with_ytdlp(url, job_dir, mode, format_type, quality, is_muted)
     if res:
         return res
 
-    # 8. Cobalt Mirror Tunnel Fallback
+    # 9. Cobalt Mirror Tunnel Fallback (Great for Instagram Stories, Twitch, Reddit, TikTok)
     cobalt_stream = fetch_from_cobalt_instances(url, mode, quality)
     if cobalt_stream:
         res = download_direct_url_to_file(cobalt_stream, job_dir, mode, format_type, quality, is_muted)
         if res:
             return res
 
-    # 9. Direct Video Scraper (Pinterest, Behance, etc. — ONLY video_url, never image_url!)
+    # 10. Direct Video Scraper (Pinterest, Behance, etc.)
     scraped = extract_design_or_photo_page(url, platform)
     if scraped and scraped.get("video_url"):
         res = download_direct_url_to_file(
@@ -1204,7 +1495,7 @@ def download_universal_media(
         if res:
             return res
 
-    # 10. gallery-dl Video Fallback
+    # 11. gallery-dl Video Fallback
     gdl_vid = download_with_gallery_dl_video(url, job_dir)
     if gdl_vid:
         return gdl_vid
@@ -1270,7 +1561,7 @@ def cut_media_segment_exact(
 # =====================================================================
 def process_download_job(
     job_id: str,
-    url: str,
+    raw_url: str,
     mode: str,
     format_type: str,
     quality: str,
@@ -1279,6 +1570,7 @@ def process_download_job(
     start_sec: Optional[float],
     end_sec: Optional[float],
 ):
+    url = extract_clean_url(raw_url)
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     platform = detect_platform_name(url)
@@ -1327,9 +1619,9 @@ DEFAULT_FEEDBACK = [
         "id": "seed-1",
         "name": "Aarav Edits",
         "type": "review",
-        "platform": "SNAPCHAT",
+        "platform": "TWITCH",
         "rating": 5,
-        "message": "Snapchat Spotlight videos, Instagram Reels aur Left Photo/Thumbnail studio ekdum badhiya kaam kar raha hai!",
+        "message": "Twitch clips, Instagram Stories/Reels aur Hashtag Extractor ekdum tezi se kaam kar rahe hain!",
         "status": "Verified User",
         "time": "Today",
     },
@@ -1370,7 +1662,12 @@ def save_feedback_item(item: dict) -> List[dict]:
 # =====================================================================
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health_check():
-    return {"status": "ok", "service": "GlobiFree.Pro"}
+    return {"status": "ok", "service": "GlobiFree.Pro", "bot": BOT_STATE}
+
+
+@app.get("/api/bot_status")
+def get_bot_status():
+    return BOT_STATE
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1384,7 +1681,7 @@ def api_info(
     url_form: Optional[str] = Form(None, alias="url"),
     url_query: Optional[str] = Query(None, alias="url"),
 ):
-    target_url = (url_form or url_query or "").strip()
+    target_url = extract_clean_url(url_form or url_query or "")
     if not target_url:
         raise HTTPException(status_code=400, detail="URL is required.")
     return fast_fetch_info(target_url)
@@ -1397,11 +1694,12 @@ def download_hd_thumbnail(
     title: str = Query("GlobiFree_Image"),
     ext: str = Query("jpg"),
 ):
-    if is_blocked_platform(url):
+    clean_url = extract_clean_url(url)
+    if is_blocked_platform(clean_url):
         raise HTTPException(status_code=400, detail="This platform is not supported.")
 
     clean_ext = ext.lower() if ext.lower() in ("jpg", "png", "webp") else "jpg"
-    info = fast_fetch_info(url)
+    info = fast_fetch_info(clean_url)
     thumb_url = info.get("hd_thumbnail") or info.get("thumbnail")
     if not thumb_url:
         raise HTTPException(status_code=404, detail="High-res image or thumbnail not found.")
@@ -1413,13 +1711,12 @@ def download_hd_thumbnail(
     final_img_path = thumb_dir / f"{safe_title}.{clean_ext}"
 
     try:
-        headers = {"User-Agent": CHROME_UA, "Referer": f"https://{urlparse(url).netloc}/"}
+        headers = {"User-Agent": CHROME_UA, "Referer": f"https://{urlparse(clean_url).netloc}/"}
         resp = cffi_requests.get(thumb_url, headers=headers, impersonate="chrome", timeout=12)
         if resp.status_code != 200 and info.get("thumbnail"):
             resp = cffi_requests.get(info["thumbnail"], headers=headers, impersonate="chrome", timeout=12)
         raw_img_path.write_bytes(resp.content)
 
-        # Convert to requested image format (jpg / png / webp) via FFmpeg if needed
         proc = subprocess.run(
             ["ffmpeg", "-y", "-i", str(raw_img_path), str(final_img_path)],
             capture_output=True,
@@ -1459,7 +1756,10 @@ def api_prepare(
     start_time: Optional[str] = Form(None),
     end_time: Optional[str] = Form(None),
 ):
-    if is_blocked_platform(url):
+    clean_url = extract_clean_url(url)
+    if not clean_url:
+        raise HTTPException(status_code=400, detail="Valid URL is required.")
+    if is_blocked_platform(clean_url):
         raise HTTPException(status_code=400, detail="This platform is not supported.")
 
     cleanup_old_temp_files()
@@ -1470,7 +1770,7 @@ def api_prepare(
 
     if not custom_title:
         try:
-            meta = fast_fetch_info(url)
+            meta = fast_fetch_info(clean_url)
             custom_title = meta.get("title")
         except Exception:
             custom_title = "GlobiFree_Media"
@@ -1495,7 +1795,7 @@ def api_prepare(
         target=process_download_job,
         args=(
             job_id,
-            url,
+            clean_url,
             mode,
             format_type,
             quality,
@@ -1572,7 +1872,7 @@ def get_feedback():
 def post_feedback(
     name: str = Form("Anonymous User"),
     feedback_type: str = Form("review"),
-    platform: str = Form("SNAPCHAT"),
+    platform: str = Form("INSTAGRAM"),
     rating: int = Form(5),
     media_url: Optional[str] = Form(None),
     message: str = Form(...),
@@ -1583,7 +1883,7 @@ def post_feedback(
         "type": "issue" if feedback_type == "issue" else "review",
         "platform": platform.strip().upper()[:20],
         "rating": max(1, min(5, int(rating))),
-        "media_url": (media_url or "").strip()[:180],
+        "media_url": extract_clean_url(media_url)[:180],
         "message": message.strip()[:400],
         "status": "Logged for Admin Check" if feedback_type == "issue" else "Verified Feedback",
         "time": time.strftime("%d %b, %I:%M %p"),
