@@ -44,7 +44,7 @@ YOUTUBE_RESTRICTION_MESSAGE = (
     "but you can view this video's hashtags and keywords."
 )
 
-# 5-Minute Keep-Alive Bot State
+# Silent 5-Minute Keep-Alive Bot State
 BOT_STATE: Dict[str, Any] = {
     "active": True,
     "interval_seconds": 300,
@@ -70,10 +70,10 @@ BLOCKED_AD_DOMAINS = (
 
 
 # =====================================================================
-# STARTUP: AUTO-UPGRADE EXTRACTORS + 5-MINUTE RENDER KEEP-ALIVE BOT
+# STARTUP: AUTO-UPGRADE EXTRACTORS + SILENT 5-MIN KEEP-ALIVE BOT
 # =====================================================================
 def keep_alive_bot_loop():
-    """Pings the Render website every 5 minutes (300s) so it never spins down."""
+    """Silently pings the Render website every 5 minutes (300s) so it never spins down."""
     time.sleep(5)
     while True:
         target_base = (
@@ -221,7 +221,7 @@ def extract_keywords_from_data(*tag_lists: Any) -> List[str]:
 
 
 def extract_json_object_after_marker(page_text: str, marker: str) -> Optional[Dict[str, Any]]:
-    """Safely extracts a JSON object following a JS variable assignment like 'ytInitialPlayerResponse ='."""
+    """Safely extracts a JSON object following a JS variable assignment."""
     idx = page_text.find(marker)
     if idx == -1:
         return None
@@ -393,10 +393,10 @@ def update_job(job_id: Optional[str], **kwargs):
 
 
 # =====================================================================
-# 1. DEDICATED PLATFORM EXTRACTORS (YouTube SEO/Thumb, Twitch GQL, Instagram, Snapchat, TikTok, X, ArtStation)
+# 1. DEDICATED PLATFORM EXTRACTORS
 # =====================================================================
 def extract_youtube_seo_and_thumb(url: str) -> Dict[str, Any]:
-    """Extracts 100% Guaranteed YouTube Keywords, Hashtags & 4K Thumbnail (Without Video Download)."""
+    """Extracts 100% Guaranteed YouTube Keywords, Hashtags & 4K Thumbnail (even from Cloud IPs)."""
     vid_id = extract_youtube_id(url)
     clean_watch_url = f"https://www.youtube.com/watch?v={vid_id}" if vid_id else url
 
@@ -405,13 +405,66 @@ def extract_youtube_seo_and_thumb(url: str) -> Dict[str, Any]:
     duration = 0
     description = ""
     raw_keywords: List[str] = []
-    hashtags: List[str] = []
 
-    # 1. Scrape watch page for ytInitialPlayerResponse (videoDetails.keywords & shortDescription)
+    # Layer 1: Direct YouTube InnerTube Player API (Works reliably on Render / cloud IPs)
+    if vid_id:
+        for client_cfg in (
+            {
+                "clientName": "WEB",
+                "clientVersion": "2.20240726.00.00",
+                "hl": "en",
+                "gl": "US",
+            },
+            {
+                "clientName": "IOS",
+                "clientVersion": "19.29.1",
+                "deviceMake": "Apple",
+                "deviceModel": "iPhone16,2",
+                "hl": "en",
+                "gl": "US",
+            },
+        ):
+            try:
+                api_resp = cffi_requests.post(
+                    "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+                    json={"videoId": vid_id, "context": {"client": client_cfg}},
+                    headers={"User-Agent": CHROME_UA, "Content-Type": "application/json"},
+                    cookies={
+                        "CONSENT": "YES+cb.20210328-17-p0.en+FX+410",
+                        "SOCS": "CAISHAgBEhJnd3NfMjAyMzA4MTAtMF9SQzIaAmVuIAEaBgiAo_CmBg",
+                    },
+                    impersonate="chrome",
+                    timeout=7,
+                )
+                if api_resp.status_code == 200:
+                    pdata = api_resp.json()
+                    vd = pdata.get("videoDetails") or {}
+                    if vd.get("title"):
+                        title = vd.get("title") or title
+                        uploader = vd.get("author") or uploader
+                        duration = int(vd.get("lengthSeconds") or 0)
+                        description = (vd.get("shortDescription") or "") + " " + description
+                        if isinstance(vd.get("keywords"), list):
+                            raw_keywords.extend(vd["keywords"])
+                    micro = ((pdata.get("microformat") or {}).get("playerMicroformatRenderer")) or {}
+                    if isinstance(micro, dict):
+                        desc_obj = micro.get("description") or {}
+                        if isinstance(desc_obj, dict) and desc_obj.get("simpleText"):
+                            description += " " + desc_obj["simpleText"]
+                    if raw_keywords or description.strip():
+                        break
+            except Exception:
+                pass
+
+    # Layer 2: Scrape watch page with Consent Bypass Cookies for ytInitialPlayerResponse + meta keywords
     try:
         resp = cffi_requests.get(
             clean_watch_url,
             headers={"User-Agent": CHROME_UA, "Accept-Language": "en-US,en;q=0.9"},
+            cookies={
+                "CONSENT": "YES+cb.20210328-17-p0.en+FX+410",
+                "SOCS": "CAISHAgBEhJnd3NfMjAyMzA4MTAtMF9SQzIaAmVuIAEaBgiAo_CmBg",
+            },
             impersonate="chrome",
             timeout=8,
         )
@@ -422,49 +475,25 @@ def extract_youtube_seo_and_thumb(url: str) -> Dict[str, Any]:
                 vd = player_data.get("videoDetails") or {}
                 title = vd.get("title") or title
                 uploader = vd.get("author") or uploader
-                duration = int(vd.get("lengthSeconds") or 0)
-                description = vd.get("shortDescription") or ""
+                duration = int(vd.get("lengthSeconds") or duration or 0)
+                if vd.get("shortDescription"):
+                    description += " " + vd["shortDescription"]
                 if isinstance(vd.get("keywords"), list):
                     raw_keywords.extend(vd["keywords"])
 
-            # Check <meta name="keywords"> as backup
-            if not raw_keywords:
-                kw_m = re.search(r'<meta[^>]+name=["\']keywords["\'][^>]+content=["\']([^"\']+)["\']', page, re.I)
-                if kw_m:
-                    raw_keywords.extend([k.strip() for k in html.unescape(kw_m.group(1)).split(",")])
+            kw_m = re.search(r'<meta[^>]+name=["\']keywords["\'][^>]+content=["\']([^"\']+)["\']', page, re.I)
+            if kw_m:
+                raw_keywords.extend([k.strip() for k in html.unescape(kw_m.group(1)).split(",")])
 
-            # Also check superTitleLink hashtags if any
-            hashtag_links = re.findall(r'"/hashtag/([\w\u0080-\uffff]+)"', page)
-            for h_tag in hashtag_links:
+            for og_tag in re.findall(r'<meta[^>]+property=["\']og:video:tag["\'][^>]+content=["\']([^"\']+)["\']', page, re.I):
+                raw_keywords.append(html.unescape(og_tag).strip())
+
+            for h_tag in re.findall(r'"/hashtag/([\w\u0080-\uffff]+)"', page):
                 description += f" #{h_tag}"
     except Exception:
         pass
 
-    # 2. If cloud IP was consent-gated and keywords/description were empty, try yt-dlp JSON dump
-    if not raw_keywords and not description:
-        try:
-            cmd = [
-                "yt-dlp",
-                "--dump-json",
-                "--no-playlist",
-                "--no-warnings",
-                "--extractor-args",
-                "youtube:player_client=android_vr,ios,web_embedded",
-                clean_watch_url,
-            ]
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            if proc.returncode == 0 and proc.stdout.strip():
-                info = json.loads(proc.stdout.splitlines()[0])
-                title = info.get("title") or title
-                uploader = info.get("uploader") or info.get("channel") or uploader
-                duration = info.get("duration") or duration
-                description = info.get("description") or description
-                if isinstance(info.get("tags"), list):
-                    raw_keywords.extend(info["tags"])
-        except Exception:
-            pass
-
-    # 3. Fallback oEmbed for Title & Author if still default
+    # Layer 3: Fallback oEmbed for Title & Author if still default
     if title == "YouTube Video":
         try:
             oemb = cffi_requests.get(
@@ -1170,7 +1199,6 @@ def fast_fetch_info(raw_url: str) -> dict:
         if cached_info and (time.time() - cached_info.get("_ts", 0) < 1800):
             return {k: v for k, v in cached_info.items() if k != "_ts"}
 
-    # Special YouTube Mode: Extract 4K Thumbnail + 100% Real Hashtags & Keywords (No Video Download)
     if platform == "YOUTUBE":
         yt_result = extract_youtube_seo_and_thumb(url)
         with CACHE_LOCK:
@@ -1838,7 +1866,7 @@ def save_feedback_item(item: dict) -> List[dict]:
 # =====================================================================
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health_check():
-    return {"status": "ok", "service": "GlobiFree.Pro", "bot": BOT_STATE}
+    return {"status": "ok", "service": "GlobiFree.Pro"}
 
 
 @app.get("/api/bot_status")
