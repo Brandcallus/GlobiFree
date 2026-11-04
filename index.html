@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GlobiFree.Pro — Universal Video, Audio & Clip Downloader</title>
+  <title>GlobiFree.Pro — Universal Video, Audio, Photo & Clip Downloader</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <style>
@@ -57,6 +57,14 @@
       box-shadow: 0 10px 25px -5px rgba(236, 72, 153, 0.55);
       transform: translateY(-1px);
     }
+    .btn-gradient-cyan {
+      background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
+      transition: all 0.25s ease;
+    }
+    .btn-gradient-cyan:hover:not(:disabled) {
+      box-shadow: 0 10px 25px -5px rgba(6, 182, 212, 0.55);
+      transform: translateY(-1px);
+    }
     .platform-pill {
       background: rgba(15, 23, 42, 0.85);
       border: 1px solid rgba(255, 255, 255, 0.08);
@@ -104,13 +112,13 @@
   </header>
 
   <!-- Main Content -->
-  <main class="max-w-4xl w-full mx-auto px-4 py-8 flex-grow">
+  <main class="max-w-5xl w-full mx-auto px-4 py-8 flex-grow">
 
     <!-- Hero Title & Supported Platform Pills -->
     <div class="text-center mb-7">
       <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-[11px] font-semibold mb-3">
         <i class="fa-solid fa-wand-magic-sparkles"></i>
-        <span>Supports Full Videos, 3D Shorts, Studio MP3, High-Res Artworks & 1s–5m Clip Trimming</span>
+        <span>Supports Full Videos, 3D Shorts, Studio MP3, High-Res Photos & 1s–5m Clip Trimming</span>
       </div>
       <h2 class="text-3xl sm:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-white via-indigo-200 to-purple-400 tracking-tight mb-2.5">
         Download From Any Platform Instantly
@@ -214,44 +222,29 @@
         </div>
       </div>
 
-      <!-- Media Info Preview Card + 1-Click Thumbnail / Artwork Grabber -->
-      <div id="mediaPreviewCard" class="hidden inner-box rounded-xl p-4 flex flex-col sm:flex-row items-center gap-4">
-        <div class="relative w-full sm:w-44 h-24 rounded-lg overflow-hidden border border-white/10 shrink-0 bg-slate-900">
-          <img id="previewThumbnail" src="" alt="Thumbnail" class="w-full h-full object-cover" />
-          <span id="previewDuration" class="absolute bottom-1.5 right-1.5 bg-black/80 text-white text-[10px] font-bold px-2 py-0.5 rounded">
-            HD Ready
+      <!-- Media Info Status Header (Appears on Fetch) -->
+      <div id="mediaPreviewCard" class="hidden inner-box rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 border border-indigo-500/30">
+        <div class="flex items-center gap-3 min-w-0">
+          <span id="previewPlatformTag" class="text-[10px] font-bold uppercase px-2.5 py-1 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shrink-0">
+            SNAPCHAT
+          </span>
+          <div class="min-w-0">
+            <h3 id="previewTitle" class="text-xs sm:text-sm font-bold text-white truncate">
+              Media Title
+            </h3>
+            <p id="previewUploader" class="text-[11px] text-slate-400 truncate">
+              Creator Account
+            </p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <span class="text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+            NO WATERMARK
+          </span>
+          <span id="prewarmBadge" class="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+            <i class="fa-solid fa-check"></i> Turbo Stream Ready
           </span>
         </div>
-
-        <div class="flex-grow min-w-0 w-full text-center sm:text-left">
-          <div class="flex flex-wrap items-center justify-center sm:justify-start gap-2 mb-1.5">
-            <span id="previewPlatformTag" class="text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-              INSTAGRAM
-            </span>
-            <span class="text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-              NO WATERMARK
-            </span>
-            <span id="prewarmBadge" class="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-              <i class="fa-solid fa-bolt fa-beat"></i> Pre-loading stream...
-            </span>
-          </div>
-          <h3 id="previewTitle" class="text-sm sm:text-base font-bold text-white truncate">
-            Media Title
-          </h3>
-          <p id="previewUploader" class="text-xs text-slate-400 truncate mt-0.5">
-            Creator Account
-          </p>
-        </div>
-
-        <button
-          type="button"
-          onclick="downloadThumbnail()"
-          class="px-3.5 py-2 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 shrink-0 transition"
-          title="Download Full HD Thumbnail or Original Artwork"
-        >
-          <i class="fa-solid fa-image text-cyan-400"></i>
-          <span>Save HD Image / Thumb</span>
-        </button>
       </div>
 
       <!-- Precision Video/Audio Clip Trimmer Studio (1s to 5m Exact Cut) -->
@@ -355,45 +348,113 @@
         </div>
       </div>
 
-      <!-- VIDEO / ARTWORK DOWNLOAD BAR -->
-      <div class="inner-box rounded-xl p-4 sm:p-5 space-y-3.5">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-indigo-400">
-            <i class="fa-solid fa-video"></i>
-            <span>Video / Media Download Bar</span>
+      <!-- SPLIT DOWNLOAD STUDIO: LEFT = PHOTO / THUMBNAIL | RIGHT = VIDEO & AUDIO -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+
+        <!-- LEFT COLUMN: DEDICATED PHOTO & HD THUMBNAIL SECTION (5 Cols) -->
+        <div class="lg:col-span-5 inner-box rounded-xl p-4 sm:p-5 flex flex-col justify-between space-y-3.5 border border-cyan-500/20">
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-cyan-400">
+                <i class="fa-solid fa-image"></i>
+                <span>Photo & Thumbnail Box</span>
+              </div>
+              <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                Left Studio
+              </span>
+            </div>
+
+            <!-- Thumbnail / Photo Preview Frame -->
+            <div class="relative w-full h-40 rounded-xl overflow-hidden border border-white/10 bg-slate-900/90 flex items-center justify-center">
+              <img
+                id="previewThumbnail"
+                src="https://placehold.co/480x270/090e1a/38bdf8?text=Photo+%2F+Thumbnail+Preview"
+                alt="Photo or Thumbnail Preview"
+                class="w-full h-full object-cover"
+              />
+              <span id="previewDuration" class="absolute bottom-2 right-2 bg-black/80 text-white text-[10px] font-bold px-2.5 py-0.5 rounded">
+                HD Cover / Photo
+              </span>
+            </div>
+
+            <div>
+              <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Photo / Thumbnail File Name</label>
+              <input type="text" id="imageFileName" placeholder="Custom photo or thumbnail title..." class="w-full px-3.5 py-2 rounded-xl text-xs" />
+            </div>
+
+            <div class="grid grid-cols-2 gap-2.5">
+              <div>
+                <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Image Format</label>
+                <select id="imageFormatSelect" class="w-full px-3 py-2 rounded-xl text-xs font-semibold">
+                  <option value="jpg" selected>JPG (Max Res)</option>
+                  <option value="png">PNG (Lossless)</option>
+                  <option value="webp">WEBP</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Resolution</label>
+                <select id="imageResSelect" class="w-full px-3 py-2 rounded-xl text-xs font-semibold">
+                  <option value="orig" selected>4K / Original</option>
+                  <option value="hd">1080p Cover</option>
+                </select>
+              </div>
+            </div>
           </div>
 
-          <label class="flex items-center gap-2 cursor-pointer select-none text-xs text-slate-300">
-            <input type="checkbox" id="muteVideoCheckbox" class="sr-only peer" />
-            <div class="w-8 h-4 bg-slate-700 rounded-full peer peer-checked:bg-rose-600 relative transition after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-3 after:h-3 after:bg-white after:rounded-full after:transition-all peer-checked:after:translate-x-4"></div>
-            <span class="text-[11px] text-slate-300">
-              <i class="fa-solid fa-volume-xmark text-rose-400 mr-1"></i>Mute Video (No Audio)
-            </span>
-          </label>
+          <button
+            type="button"
+            id="downloadImageBtn"
+            onclick="downloadThumbnail()"
+            class="btn-gradient-cyan w-full py-2.5 px-4 rounded-xl text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            <i class="fa-solid fa-camera"></i>
+            <span>Download Photo / Thumbnail</span>
+          </button>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-          <div class="sm:col-span-5">
-            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Video / Media File Name</label>
-            <input type="text" id="videoFileName" placeholder="Custom media title..." class="w-full px-3.5 py-2.5 rounded-xl text-xs" />
-          </div>
-          <div class="sm:col-span-2">
-            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Format</label>
-            <select id="videoFormatSelect" class="w-full px-3 py-2.5 rounded-xl text-xs font-semibold">
-              <option value="mp4" selected>MP4</option>
-              <option value="webm">WEBM</option>
-            </select>
-          </div>
-          <div class="sm:col-span-2">
-            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Quality</label>
-            <select id="videoQualitySelect" onchange="prewarmSelection('video')" class="w-full px-3 py-2.5 rounded-xl text-xs font-semibold">
-              <option value="1080" selected>1080p Full HD</option>
-              <option value="720">720p HD</option>
-              <option value="480">480p</option>
-              <option value="360">360p Fast</option>
-            </select>
-          </div>
-          <div class="sm:col-span-3">
+        <!-- RIGHT COLUMN: VIDEO DOWNLOAD BAR + AUDIO DOWNLOAD BAR (7 Cols) -->
+        <div class="lg:col-span-7 flex flex-col justify-between gap-4">
+
+          <!-- VIDEO DOWNLOAD BAR (Right Top) -->
+          <div class="inner-box rounded-xl p-4 sm:p-5 space-y-3.5 border border-indigo-500/20">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-indigo-400">
+                <i class="fa-solid fa-video"></i>
+                <span>Video Download Bar (MP4 / WEBM Only)</span>
+              </div>
+
+              <label class="flex items-center gap-2 cursor-pointer select-none text-xs text-slate-300">
+                <input type="checkbox" id="muteVideoCheckbox" class="sr-only peer" />
+                <div class="w-8 h-4 bg-slate-700 rounded-full peer peer-checked:bg-rose-600 relative transition after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-3 after:h-3 after:bg-white after:rounded-full after:transition-all peer-checked:after:translate-x-4"></div>
+                <span class="text-[11px] text-slate-300">
+                  <i class="fa-solid fa-volume-xmark text-rose-400 mr-1"></i>Mute Video
+                </span>
+              </label>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+              <div class="sm:col-span-6">
+                <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Video File Name</label>
+                <input type="text" id="videoFileName" placeholder="Custom video title..." class="w-full px-3.5 py-2.5 rounded-xl text-xs" />
+              </div>
+              <div class="sm:col-span-3">
+                <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Format</label>
+                <select id="videoFormatSelect" class="w-full px-3 py-2.5 rounded-xl text-xs font-semibold">
+                  <option value="mp4" selected>MP4 Video</option>
+                  <option value="webm">WEBM Video</option>
+                </select>
+              </div>
+              <div class="sm:col-span-3">
+                <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Quality</label>
+                <select id="videoQualitySelect" onchange="prewarmSelection('video')" class="w-full px-3 py-2.5 rounded-xl text-xs font-semibold">
+                  <option value="1080" selected>1080p Full HD</option>
+                  <option value="720">720p HD</option>
+                  <option value="480">480p</option>
+                  <option value="360">360p Fast</option>
+                </select>
+              </div>
+            </div>
+
             <button
               type="button"
               id="downloadVideoBtn"
@@ -401,44 +462,43 @@
               class="btn-gradient-primary w-full py-2.5 px-4 rounded-xl text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <i class="fa-solid fa-download"></i>
-              <span id="downloadVideoBtnText">Download Video</span>
+              <span id="downloadVideoBtnText">Download Full HD Video</span>
             </button>
           </div>
-        </div>
-      </div>
 
-      <!-- AUDIO DOWNLOAD BAR -->
-      <div class="inner-box rounded-xl p-4 sm:p-5 space-y-3.5">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-pink-400">
-            <i class="fa-solid fa-music"></i>
-            <span>Audio Only Download Bar</span>
-          </div>
-          <span class="text-[11px] text-slate-400">Extract studio MP3 or cut custom audio ringtone</span>
-        </div>
+          <!-- AUDIO DOWNLOAD BAR (Right Bottom) -->
+          <div class="inner-box rounded-xl p-4 sm:p-5 space-y-3.5 border border-pink-500/20">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-pink-400">
+                <i class="fa-solid fa-music"></i>
+                <span>Audio Only Download Bar</span>
+              </div>
+              <span class="text-[11px] text-slate-400">Extract studio MP3 or ringtone</span>
+            </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-          <div class="sm:col-span-5">
-            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Audio File Name</label>
-            <input type="text" id="audioFileName" placeholder="Custom audio title..." class="w-full px-3.5 py-2.5 rounded-xl text-xs" />
-          </div>
-          <div class="sm:col-span-2">
-            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Format</label>
-            <select id="audioFormatSelect" onchange="prewarmSelection('audio')" class="w-full px-3 py-2.5 rounded-xl text-xs font-semibold">
-              <option value="mp3" selected>MP3</option>
-              <option value="m4a">M4A</option>
-              <option value="wav">WAV</option>
-            </select>
-          </div>
-          <div class="sm:col-span-2">
-            <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Bitrate</label>
-            <select id="audioQualitySelect" class="w-full px-3 py-2.5 rounded-xl text-xs font-semibold">
-              <option value="320" selected>320kbps</option>
-              <option value="192">192kbps</option>
-              <option value="128">128kbps</option>
-            </select>
-          </div>
-          <div class="sm:col-span-3">
+            <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+              <div class="sm:col-span-6">
+                <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Audio File Name</label>
+                <input type="text" id="audioFileName" placeholder="Custom audio title..." class="w-full px-3.5 py-2.5 rounded-xl text-xs" />
+              </div>
+              <div class="sm:col-span-3">
+                <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Format</label>
+                <select id="audioFormatSelect" onchange="prewarmSelection('audio')" class="w-full px-3 py-2.5 rounded-xl text-xs font-semibold">
+                  <option value="mp3" selected>MP3</option>
+                  <option value="m4a">M4A</option>
+                  <option value="wav">WAV</option>
+                </select>
+              </div>
+              <div class="sm:col-span-3">
+                <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Bitrate</label>
+                <select id="audioQualitySelect" class="w-full px-3 py-2.5 rounded-xl text-xs font-semibold">
+                  <option value="320" selected>320kbps</option>
+                  <option value="192">192kbps</option>
+                  <option value="128">128kbps</option>
+                </select>
+              </div>
+            </div>
+
             <button
               type="button"
               id="downloadAudioBtn"
@@ -449,6 +509,7 @@
               <span id="downloadAudioBtnText">Download Audio</span>
             </button>
           </div>
+
         </div>
       </div>
 
@@ -618,6 +679,8 @@
     const previewUploader = document.getElementById('previewUploader');
     const prewarmBadge = document.getElementById('prewarmBadge');
 
+    const imageFileName = document.getElementById('imageFileName');
+    const imageFormatSelect = document.getElementById('imageFormatSelect');
     const videoFormatSelect = document.getElementById('videoFormatSelect');
     const audioFormatSelect = document.getElementById('audioFormatSelect');
     const videoQualitySelect = document.getElementById('videoQualitySelect');
@@ -787,7 +850,7 @@
       document.getElementById('trimActivePill').classList.add('hidden');
       document.getElementById('trimSubtext').textContent = 'Want only a 1-second scene or a 1–2 minute part? Cut the exact timestamp without downloading the full video!';
       document.getElementById('trimBtnLabel').textContent = 'Cut Custom Clip';
-      downloadVideoBtnText.textContent = 'Download Video';
+      downloadVideoBtnText.textContent = 'Download Full HD Video';
       downloadAudioBtnText.textContent = 'Download Audio';
       document.getElementById('trimmerPanel').classList.add('hidden');
     }
@@ -806,10 +869,11 @@
     function downloadThumbnail() {
       const url = mediaUrlInput.value.trim();
       if (!url) return showAlert('Please paste a link first.', true);
-      const title = videoFileName.value.trim() || 'GlobiFree_Artwork';
-      const dlUrl = `${API_BASE}/api/thumbnail?url=${encodeURIComponent(url)}&title=${encodeURIComponent(title)}`;
-      startChromeNativeDownload(dlUrl, `${title}_HD.jpg`);
-      showAlert('<i class="fa-solid fa-image mr-1.5"></i> Downloading Full HD Image / Thumbnail in Chrome!', false);
+      const title = imageFileName.value.trim() || videoFileName.value.trim() || 'GlobiFree_Image';
+      const imgFmt = imageFormatSelect.value || 'jpg';
+      const dlUrl = `${API_BASE}/api/thumbnail?url=${encodeURIComponent(url)}&title=${encodeURIComponent(title)}&ext=${encodeURIComponent(imgFmt)}`;
+      startChromeNativeDownload(dlUrl, `${title}_HD.${imgFmt}`);
+      showAlert(`<i class="fa-solid fa-image mr-1.5"></i> Downloading High-Res Photo / Thumbnail (.${imgFmt.toUpperCase()}) in Chrome!`, false);
     }
 
     async function fetchMediaDetails() {
@@ -836,7 +900,7 @@
 
         const data = await res.json();
 
-        previewThumbnail.src = data.thumbnail || 'https://placehold.co/320x180/0f172a/6366f1?text=GlobiFree';
+        previewThumbnail.src = data.thumbnail || 'https://placehold.co/480x270/090e1a/38bdf8?text=GlobiFree+Preview';
         previewPlatformTag.textContent = (data.platform || 'MEDIA').toUpperCase();
         previewDuration.textContent = data.duration_string || 'HD Ready';
         previewTitle.textContent = data.title || 'GlobiFree Media';
@@ -845,17 +909,11 @@
         if (data.title) {
           videoFileName.value = data.title;
           audioFileName.value = data.title;
+          imageFileName.value = data.title;
         }
 
         mediaPreviewCard.classList.remove('hidden');
         prewarmSelection('video');
-
-        prewarmBadge.className = 'text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1';
-        prewarmBadge.innerHTML = '<i class="fa-solid fa-bolt fa-beat"></i> Pre-loading stream...';
-        setTimeout(() => {
-          prewarmBadge.className = 'text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1';
-          prewarmBadge.innerHTML = '<i class="fa-solid fa-check"></i> Turbo Stream Ready';
-        }, 1200);
 
       } catch (err) {
         showAlert(err.message, true);
@@ -894,7 +952,7 @@
       const clipNote = isTrimActive ? ` [Clip ${secondsToTime(savedStartSeconds)}-${secondsToTime(savedEndSeconds)}]` : '';
       progressBar.style.width = '30%';
       progressPercent.textContent = '30%';
-      statusText.innerHTML = `<i class="fa-solid fa-bolt fa-beat text-amber-400 mr-1"></i> Preparing ${isVideo ? quality + 'p ' + formatType.toUpperCase() : formatType.toUpperCase() + ' Audio'}${clipNote}...`;
+      statusText.innerHTML = `<i class="fa-solid fa-bolt fa-beat text-amber-400 mr-1"></i> Preparing ${isVideo ? quality + 'p ' + formatType.toUpperCase() + ' Video' : formatType.toUpperCase() + ' Audio'}${clipNote}...`;
 
       try {
         const formData = new FormData();
@@ -929,7 +987,7 @@
           statusText.innerHTML = `<i class="fa-solid fa-circle-notch spin-fast text-indigo-400 mr-1"></i> ${
             isTrimActive && pct >= 85
               ? 'Cutting exact custom clip with FFmpeg...'
-              : `Processing high-speed stream (${pct}%)...`
+              : `Extracting real video/audio stream (${pct}%)...`
           }`;
 
           await new Promise(r => setTimeout(r, 700));
@@ -955,7 +1013,7 @@
         startChromeNativeDownload(data.download_url, data.filename);
         showAlert(
           `<i class="fa-solid fa-circle-check mr-1.5"></i> ${
-            isTrimActive ? 'Exact trimmed clip' : 'File'
+            isTrimActive ? 'Exact trimmed clip' : 'Video/Audio'
           } download started in Chrome!`,
           false
         );
