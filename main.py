@@ -31,18 +31,15 @@ app.add_middleware(
 TEMP_DIR = Path("/tmp/globifree_downloads")
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 COOKIES_FILE = Path("cookies.txt")
-FEEDBACK_FILE = Path("/tmp/globifree_feedback.json")
 
 INFO_CACHE: Dict[str, Dict[str, Any]] = {}
 JOBS: Dict[str, Dict[str, Any]] = {}
 
 CACHE_LOCK = threading.Lock()
 JOBS_LOCK = threading.Lock()
-FEEDBACK_LOCK = threading.Lock()
 
 YOUTUBE_RESTRICTION_MESSAGE = (
-    "For YouTube, no download formats other than the thumbnail are currently available, "
-    "but you can view this video's hashtags and keywords."
+    "For YouTube, no download formats other than the thumbnail are currently available."
 )
 
 BOT_STATE: Dict[str, Any] = {
@@ -58,11 +55,6 @@ CHROME_UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
 
-YT_CONSENT_COOKIES = {
-    "CONSENT": "YES+cb.20210328-17-p0.en+FX+410",
-    "SOCS": "CAISHAgBEhJnd3NfMjAyMzA4MTAtMF9SQzIaAmVuIAEaBgiAo_CmBg",
-}
-
 BLOCKED_AD_DOMAINS = (
     "linkbrisora",
     "pathzenora",
@@ -72,24 +64,6 @@ BLOCKED_AD_DOMAINS = (
     "/landers/",
     "main.php?lp_key",
 )
-
-# Default generic site meta keywords that must NEVER be shown as video keywords
-BOILERPLATE_KEYWORDS = {
-    "video",
-    "sharing",
-    "camera phone",
-    "video phone",
-    "free",
-    "upload",
-    "youtube",
-    "instagram",
-    "snapchat",
-    "tiktok",
-    "reddit",
-    "facebook",
-    "twitter",
-    "watch",
-}
 
 
 # =====================================================================
@@ -155,7 +129,7 @@ def on_startup_tasks():
 
 
 # =====================================================================
-# HELPER FUNCTIONS (URL CLEANER, REAL HASHTAGS & REAL KEYWORDS EXTRACTORS)
+# HELPER FUNCTIONS
 # =====================================================================
 def extract_clean_url(raw_input: Optional[str]) -> str:
     """Extracts the first valid http/https URL from any messy share text."""
@@ -182,88 +156,6 @@ def extract_youtube_id(url: str) -> Optional[str]:
         if match:
             return match.group(1)
     return None
-
-
-def extract_hashtags_from_data(*texts_and_lists: Any) -> List[str]:
-    """Extracts 100% real #hashtags from titles, superTitles, and full descriptions."""
-    found: List[str] = []
-    seen = set()
-
-    def _add_tag(raw_tag: str):
-        clean = re.sub(r"[^\w\u0080-\uffff]", "", str(raw_tag or "").strip())
-        if not clean or len(clean) < 2 or clean.isdigit():
-            return
-        low = clean.lower()
-        if low in ("http", "https", "www", "com", "net", "org", "mp4"):
-            return
-        if low not in seen:
-            seen.add(low)
-            found.append(f"#{clean}")
-
-    for item in texts_and_lists:
-        if not item:
-            continue
-        if isinstance(item, str):
-            for match in re.findall(r"#([\w\u0080-\uffff]+)", item):
-                _add_tag(match)
-        elif isinstance(item, (list, tuple, set)):
-            for sub in item:
-                if isinstance(sub, str):
-                    for match in re.findall(r"#([\w\u0080-\uffff]+)", sub):
-                        _add_tag(match)
-    return found[:80]
-
-
-def extract_keywords_from_data(official_tags: Any = None) -> List[str]:
-    """
-    Strictly extracts ONLY 100% REAL official creator keywords/tags.
-    NEVER guesses or splits words from the video title or description!
-    """
-    found: List[str] = []
-    seen = set()
-
-    def _add_kw(raw_kw: str):
-        clean = str(raw_kw or "").strip().lstrip("#").strip()
-        if not clean or len(clean) < 2 or len(clean) > 70 or clean.isdigit():
-            return
-        low = clean.lower()
-        if low in BOILERPLATE_KEYWORDS or low.startswith("http"):
-            return
-        if low not in seen:
-            seen.add(low)
-            found.append(clean)
-
-    if not official_tags:
-        return []
-
-    if isinstance(official_tags, (list, tuple, set)):
-        for item in official_tags:
-            if isinstance(item, (list, tuple, set)):
-                for sub in item:
-                    if isinstance(sub, str):
-                        _add_kw(sub)
-            elif isinstance(item, str):
-                _add_kw(item)
-    elif isinstance(official_tags, str):
-        for part in official_tags.split(","):
-            _add_kw(part)
-
-    return found[:80]
-
-
-def extract_json_object_after_marker(page_text: str, marker: str) -> Optional[Dict[str, Any]]:
-    """Safely decodes a JSON object following a JS marker like 'var ytInitialData ='."""
-    idx = page_text.find(marker)
-    if idx == -1:
-        return None
-    brace_idx = page_text.find("{", idx + len(marker))
-    if brace_idx == -1:
-        return None
-    try:
-        obj, _ = json.JSONDecoder().raw_decode(page_text, brace_idx)
-        return obj if isinstance(obj, dict) else None
-    except Exception:
-        return None
 
 
 def is_safe_media_url(dl_url: Optional[str]) -> bool:
@@ -426,242 +318,47 @@ def update_job(job_id: Optional[str], **kwargs):
 
 
 # =====================================================================
-# 1. ACCURATE & FAST YOUTUBE HASHTAGS, KEYWORDS & THUMBNAIL EXTRACTOR
+# 1. DEDICATED FAST PLATFORM EXTRACTORS (< 0.5s)
 # =====================================================================
-def _walk_youtube_json_for_metadata(obj: Any, target_vid_id: Optional[str], out: Dict[str, Any]):
-    """
-    Recursively walks YouTube's ytInitialData / youtubei/v1/next / ytInitialPlayerResponse JSON
-    to extract the exact video's full description, superTitle hashtags, title, channel & studio keywords.
-    """
-    if isinstance(obj, dict):
-        # 1. Check videoDetails (from ytInitialPlayerResponse) - strictly match videoId!
-        if "videoDetails" in obj and isinstance(obj["videoDetails"], dict):
-            vd = obj["videoDetails"]
-            if not target_vid_id or vd.get("videoId") == target_vid_id:
-                if vd.get("title") and not out["title"]:
-                    out["title"] = vd["title"]
-                if vd.get("author") and not out["uploader"]:
-                    out["uploader"] = vd["author"]
-                if vd.get("lengthSeconds") and not out["duration"]:
-                    try:
-                        out["duration"] = int(vd["lengthSeconds"])
-                    except Exception:
-                        pass
-                if vd.get("shortDescription"):
-                    out["descriptions"].append(vd["shortDescription"])
-                if isinstance(vd.get("keywords"), list):
-                    out["keywords"].extend(vd["keywords"])
-
-        # 2. Check videoPrimaryInfoRenderer (Main video title + top hashtags above title)
-        if "videoPrimaryInfoRenderer" in obj and isinstance(obj["videoPrimaryInfoRenderer"], dict):
-            vpi = obj["videoPrimaryInfoRenderer"]
-            t_runs = (vpi.get("title") or {}).get("runs") or []
-            if t_runs and not out["title"]:
-                out["title"] = "".join(r.get("text", "") for r in t_runs if isinstance(r, dict))
-            st_runs = (vpi.get("superTitleLink") or {}).get("runs") or []
-            if st_runs:
-                out["descriptions"].append("".join(r.get("text", "") for r in st_runs if isinstance(r, dict)))
-
-        # 3. Check videoSecondaryInfoRenderer (Channel name + Full Description)
-        if "videoSecondaryInfoRenderer" in obj and isinstance(obj["videoSecondaryInfoRenderer"], dict):
-            vsi = obj["videoSecondaryInfoRenderer"]
-            owner_runs = (((vsi.get("owner") or {}).get("videoOwnerRenderer") or {}).get("title") or {}).get("runs") or []
-            if owner_runs and not out["uploader"]:
-                out["uploader"] = "".join(r.get("text", "") for r in owner_runs if isinstance(r, dict))
-            attr_desc = vsi.get("attributedDescription")
-            if isinstance(attr_desc, dict) and attr_desc.get("content"):
-                out["descriptions"].append(attr_desc["content"])
-            desc_runs = (vsi.get("description") or {}).get("runs") or []
-            if desc_runs:
-                out["descriptions"].append("".join(r.get("text", "") for r in desc_runs if isinstance(r, dict)))
-
-        # 4. Check expandableVideoDescriptionBodyRenderer / attributedDescriptionBodyText
-        if "attributedDescriptionBodyText" in obj and isinstance(obj["attributedDescriptionBodyText"], dict):
-            content_str = obj["attributedDescriptionBodyText"].get("content")
-            if content_str:
-                out["descriptions"].append(content_str)
-
-        # 5. Check microformat (playerMicroformatRenderer / microformatDataRenderer)
-        for mf_key in ("playerMicroformatRenderer", "microformatDataRenderer"):
-            if mf_key in obj and isinstance(obj[mf_key], dict):
-                mf = obj[mf_key]
-                desc_mf = mf.get("description")
-                if isinstance(desc_mf, dict) and desc_mf.get("simpleText"):
-                    out["descriptions"].append(desc_mf["simpleText"])
-                elif isinstance(desc_mf, str):
-                    out["descriptions"].append(desc_mf)
-                if isinstance(mf.get("tags"), list):
-                    out["keywords"].extend(mf["tags"])
-
-        for v in obj.values():
-            if isinstance(v, (dict, list)):
-                _walk_youtube_json_for_metadata(v, target_vid_id, out)
-
-    elif isinstance(obj, list):
-        for item in obj:
-            if isinstance(item, (dict, list)):
-                _walk_youtube_json_for_metadata(item, target_vid_id, out)
-
-
-def extract_youtube_seo_and_thumb(url: str) -> Dict[str, Any]:
-    """
-    Fetches 100% Real YouTube Hashtags (from full description & superTitle)
-    and 100% Real Studio Keywords (if any were added by the creator) in < 0.7s.
-    """
+def extract_youtube_thumb_fast(url: str) -> Dict[str, Any]:
+    """Instant (~0.2s) YouTube Title & 4K Thumbnail extractor (Video/Audio download restricted)."""
     vid_id = extract_youtube_id(url)
     clean_watch_url = f"https://www.youtube.com/watch?v={vid_id}" if vid_id else url
 
-    shared: Dict[str, Any] = {
-        "title": "",
-        "uploader": "",
-        "duration": 0,
-        "descriptions": [],
-        "keywords": [],
-    }
-    lock = threading.Lock()
+    title = "YouTube Video"
+    uploader = "YouTube Creator"
 
-    # Worker 1: InnerTube 'next' API (Never blocked by bot-check on Render! Always returns full description & hashtags)
-    def _task_innertube_next():
-        if not vid_id:
-            return
-        try:
-            resp = cffi_requests.post(
-                "https://www.youtube.com/youtubei/v1/next?prettyPrint=false",
-                json={
-                    "videoId": vid_id,
-                    "context": {
-                        "client": {
-                            "clientName": "WEB",
-                            "clientVersion": "2.20240726.00.00",
-                            "hl": "en",
-                            "gl": "US",
-                        }
-                    },
-                },
-                headers={"User-Agent": CHROME_UA, "Content-Type": "application/json"},
-                cookies=YT_CONSENT_COOKIES,
-                impersonate="chrome",
-                timeout=3.5,
-            )
-            if resp.status_code == 200:
-                next_data = resp.json()
-                local_out = {"title": "", "uploader": "", "duration": 0, "descriptions": [], "keywords": []}
-                _walk_youtube_json_for_metadata(next_data, vid_id, local_out)
-                with lock:
-                    if local_out["title"] and not shared["title"]:
-                        shared["title"] = local_out["title"]
-                    if local_out["uploader"] and not shared["uploader"]:
-                        shared["uploader"] = local_out["uploader"]
-                    shared["descriptions"].extend(local_out["descriptions"])
-                    shared["keywords"].extend(local_out["keywords"])
-        except Exception:
-            pass
-
-    # Worker 2: Direct Watch Page HTML (Extracts og:video:tag, ytInitialPlayerResponse & ytInitialData)
-    def _task_watch_html():
-        try:
-            resp = cffi_requests.get(
-                clean_watch_url,
-                headers={"User-Agent": CHROME_UA, "Accept-Language": "en-US,en;q=0.9"},
-                cookies=YT_CONSENT_COOKIES,
-                impersonate="chrome",
-                timeout=3.5,
-            )
-            if resp.status_code == 200:
-                page = resp.text
-                local_out = {"title": "", "uploader": "", "duration": 0, "descriptions": [], "keywords": []}
-
-                # 1. Extract every <meta property="og:video:tag" content="..."> (100% official Studio tags)
-                og_tags = re.findall(
-                    r'<meta[^>]+property=["\']og:video:tag["\'][^>]+content=["\']([^"\']+)["\']', page, re.I
-                )
-                for t in og_tags:
-                    local_out["keywords"].append(html.unescape(t).strip())
-
-                # 2. Extract <meta name="keywords" content="...">
-                kw_m = re.search(r'<meta[^>]+name=["\']keywords["\'][^>]+content=["\']([^"\']+)["\']', page, re.I)
-                if kw_m:
-                    raw_meta_kws = [k.strip() for k in html.unescape(kw_m.group(1)).split(",") if k.strip()]
-                    # Ignore YouTube's default boilerplate when a video has no tags
-                    if set(k.lower() for k in raw_meta_kws) != {
-                        "video", "sharing", "camera phone", "video phone", "free", "upload"
-                    }:
-                        local_out["keywords"].extend(raw_meta_kws)
-
-                # 3. Walk ytInitialPlayerResponse & ytInitialData JSON objects
-                for marker in ("ytInitialPlayerResponse", "ytInitialData"):
-                    parsed = extract_json_object_after_marker(page, marker)
-                    if parsed:
-                        _walk_youtube_json_for_metadata(parsed, vid_id, local_out)
-
-                with lock:
-                    if local_out["title"] and not shared["title"]:
-                        shared["title"] = local_out["title"]
-                    if local_out["uploader"] and not shared["uploader"]:
-                        shared["uploader"] = local_out["uploader"]
-                    if local_out["duration"] and not shared["duration"]:
-                        shared["duration"] = local_out["duration"]
-                    shared["descriptions"].extend(local_out["descriptions"])
-                    shared["keywords"].extend(local_out["keywords"])
-        except Exception:
-            pass
-
-    with ThreadPoolExecutor(max_workers=2) as ex:
-        f1 = ex.submit(_task_innertube_next)
-        f2 = ex.submit(_task_watch_html)
-        for f in as_completed([f1, f2], timeout=4.0):
-            try:
-                f.result()
-            except Exception:
-                pass
-
-    # Fallback oEmbed ONLY if title/uploader still empty
-    if not shared["title"]:
-        try:
-            oemb = cffi_requests.get(
-                f"https://www.youtube.com/oembed?url={quote(clean_watch_url)}&format=json",
-                impersonate="chrome",
-                timeout=2.5,
-            )
-            if oemb.status_code == 200:
-                od = oemb.json()
-                shared["title"] = od.get("title") or "YouTube Video"
-                shared["uploader"] = od.get("author_name") or "YouTube Creator"
-        except Exception:
-            pass
-
-    final_title = shared["title"] or "YouTube Video"
-    final_uploader = shared["uploader"] or "YouTube Creator"
-    full_description = "\n".join(shared["descriptions"])
-
-    # Extract 100% real #hashtags from title + full description
-    hashtags = extract_hashtags_from_data(final_title, full_description)
-    # Extract ONLY 100% real Studio keywords (returns [] if creator didn't add any keywords)
-    keywords = extract_keywords_from_data(shared["keywords"])
+    try:
+        oemb = cffi_requests.get(
+            f"https://www.youtube.com/oembed?url={quote(clean_watch_url)}&format=json",
+            impersonate="chrome",
+            timeout=2.5,
+        )
+        if oemb.status_code == 200:
+            od = oemb.json()
+            title = od.get("title") or title
+            uploader = od.get("author_name") or uploader
+    except Exception:
+        pass
 
     hq_thumb = f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg" if vid_id else ""
     max_thumb = f"https://i.ytimg.com/vi/{vid_id}/maxresdefault.jpg" if vid_id else hq_thumb
 
     return {
-        "title": final_title,
-        "uploader": final_uploader,
-        "duration": shared["duration"],
-        "duration_string": format_duration(shared["duration"]) if shared["duration"] else "Thumbnail & SEO Ready",
+        "title": title,
+        "uploader": uploader,
+        "duration": 0,
+        "duration_string": "Thumbnail Only",
         "thumbnail": hq_thumb,
         "hd_thumbnail": max_thumb,
         "platform": "YOUTUBE",
-        "max_quality": "THUMBNAIL + SEO ONLY",
-        "hashtags": hashtags,
-        "keywords": keywords,
+        "max_quality": "THUMBNAIL ONLY",
         "youtube_restricted": True,
     }
 
 
-# =====================================================================
-# 2. DEDICATED FAST PLATFORM EXTRACTORS
-# =====================================================================
 def extract_twitch_clip(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts Twitch Clips directly via Twitch GQL API with signed MP4 URLs."""
+    """Extracts Twitch Clips directly via Twitch GQL API with signed MP4 URLs in ~0.4s."""
     m = re.search(r"(?:twitch\.tv/[^/]+/clip/|clips\.twitch\.tv/)([A-Za-z0-9_-]+)", url)
     if not m:
         return None
@@ -686,7 +383,7 @@ def extract_twitch_clip(url: str) -> Optional[Dict[str, Any]]:
             {
                 "query": (
                     "query($slug: ID!) { clip(slug: $slug) { title durationSeconds thumbnailURL "
-                    "broadcaster { displayName login } game { displayName } } }"
+                    "broadcaster { displayName login } } }"
                 ),
                 "variables": {"slug": slug},
             },
@@ -715,11 +412,8 @@ def extract_twitch_clip(url: str) -> Optional[Dict[str, Any]]:
 
                 title = clip_meta.get("title") or f"Twitch Clip {slug}"
                 broadcaster = (clip_meta.get("broadcaster") or {}).get("displayName") or "Twitch Streamer"
-                game_name = (clip_meta.get("game") or {}).get("displayName") or ""
                 duration = clip_meta.get("durationSeconds") or 0
                 thumb = clip_meta.get("thumbnailURL") or ""
-                tags = extract_hashtags_from_data(title)
-                keywords = extract_keywords_from_data([game_name] if game_name else [])
 
                 if video_url or thumb:
                     return {
@@ -729,8 +423,6 @@ def extract_twitch_clip(url: str) -> Optional[Dict[str, Any]]:
                         "thumbnail": thumb,
                         "video_url": video_url,
                         "image_url": thumb,
-                        "hashtags": tags,
-                        "keywords": keywords,
                     }
     except Exception:
         pass
@@ -776,8 +468,6 @@ def extract_instagram_media(url: str) -> Optional[Dict[str, Any]]:
                             "thumbnail": thumb_url,
                             "video_url": video_url if is_safe_media_url(video_url) else None,
                             "image_url": thumb_url if is_safe_media_url(thumb_url) else None,
-                            "hashtags": extract_hashtags_from_data(caption),
-                            "keywords": [],
                         }
             except Exception:
                 pass
@@ -791,8 +481,6 @@ def extract_instagram_media(url: str) -> Optional[Dict[str, Any]]:
                 "thumbnail": "",
                 "video_url": cobalt_dl,
                 "image_url": None,
-                "hashtags": [],
-                "keywords": [],
             }
 
     m = re.search(r"instagram\.com/(?:[^/]+/)?(?:reel|reels|p|tv)/([A-Za-z0-9_-]+)", url)
@@ -833,8 +521,6 @@ def extract_instagram_media(url: str) -> Optional[Dict[str, Any]]:
                                 "thumbnail": thumb_url,
                                 "video_url": video_url if is_safe_media_url(video_url) else None,
                                 "image_url": thumb_url if is_safe_media_url(thumb_url) else None,
-                                "hashtags": extract_hashtags_from_data(caption),
-                                "keywords": [],
                             }
                         )
         except Exception:
@@ -867,20 +553,16 @@ def extract_instagram_media(url: str) -> Optional[Dict[str, Any]]:
                         thumb_url = html.unescape(img_m.group(1))
                 user_m = re.search(r'class="UsernameText"[^>]*>([^<]+)<', page)
                 uploader = user_m.group(1).strip() if user_m else "Instagram Creator"
-                cap_m = re.search(r'class="Caption"[^>]*>(.*?)</div>', page, re.S)
-                caption_text = re.sub(r"<[^>]+>", " ", html.unescape(cap_m.group(1))).strip() if cap_m else ""
                 if video_url or thumb_url:
                     with lock:
                         results.append(
                             {
-                                "title": (caption_text or f"Instagram_{shortcode}")[:80],
+                                "title": f"Instagram_{shortcode}",
                                 "uploader": uploader,
                                 "duration": 0,
                                 "thumbnail": thumb_url,
                                 "video_url": video_url if is_safe_media_url(video_url) else None,
                                 "image_url": thumb_url if is_safe_media_url(thumb_url) else None,
-                                "hashtags": extract_hashtags_from_data(caption_text),
-                                "keywords": [],
                             }
                         )
         except Exception:
@@ -902,14 +584,12 @@ def extract_instagram_media(url: str) -> Optional[Dict[str, Any]]:
                 best["video_url"] = r["video_url"]
             if not best.get("thumbnail") and r.get("thumbnail"):
                 best["thumbnail"] = r["thumbnail"]
-            if len(r.get("hashtags") or []) > len(best.get("hashtags") or []):
-                best["hashtags"] = r["hashtags"]
         return best
     return None
 
 
 def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts verified MP4 video, HD thumbnail & real hashtags from Snapchat Spotlight and Stories."""
+    """Extracts verified MP4 video and HD thumbnail from Snapchat Spotlight and Stories."""
     try:
         resp = cffi_requests.get(
             url,
@@ -940,13 +620,11 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
                 pass
 
         title = "Snapchat Spotlight Video"
-        description_text = ""
         uploader = "Snapchat Creator"
         thumb_url = ""
         video_url = None
         duration = 0
         candidate_videos: List[str] = []
-        raw_keywords: List[str] = []
 
         ld_blocks = re.findall(
             r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', page, re.S | re.I
@@ -964,9 +642,6 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
                             thumb_url = t_val[0] if isinstance(t_val, list) and t_val else str(t_val)
                         if item.get("name") or item.get("description"):
                             title = item.get("name") or item.get("description")
-                            description_text += " " + str(item.get("description") or "")
-                        if item.get("keywords"):
-                            raw_keywords.append(item["keywords"])
                         creator = item.get("creator") or item.get("author") or {}
                         if isinstance(creator, dict) and creator.get("name"):
                             uploader = creator["name"]
@@ -991,7 +666,6 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
                         thumb_url = vid_meta["thumbnailUrl"]
                     if vid_meta.get("name") or vid_meta.get("description"):
                         title = vid_meta.get("name") or vid_meta.get("description") or title
-                        description_text += " " + str(vid_meta.get("description") or "")
                     creator_obj = vid_meta.get("creator") or {}
                     if isinstance(creator_obj, dict) and creator_obj.get("name"):
                         uploader = creator_obj["name"]
@@ -1012,9 +686,6 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
                         for k, v in obj.items():
                             if k in ("contentUrl", "videoUrl", "mediaUrl") and isinstance(v, str) and v.startswith("http"):
                                 candidate_videos.append(v)
-                            elif k in ("title", "description", "hashtags") and isinstance(v, str):
-                                nonlocal description_text
-                                description_text += " " + v
                             else:
                                 _walk_snap(v)
                     elif isinstance(obj, list):
@@ -1061,15 +732,13 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
             "video_url": video_url,
             "image_url": thumb_url if is_safe_media_url(thumb_url) else None,
             "canonical_url": canonical_url,
-            "hashtags": extract_hashtags_from_data(title, description_text),
-            "keywords": extract_keywords_from_data(raw_keywords),
         }
     except Exception:
         return None
 
 
 def extract_tiktok_no_watermark(url: str) -> Optional[Dict[str, Any]]:
-    """Fetches TikTok HD No-Watermark video, metadata & real hashtags via TikWM API."""
+    """Fetches TikTok HD No-Watermark video & metadata via TikWM API."""
     try:
         resp = cffi_requests.post(
             "https://www.tikwm.com/api/",
@@ -1093,8 +762,6 @@ def extract_tiktok_no_watermark(url: str) -> Optional[Dict[str, Any]]:
                     "thumbnail": data.get("origin_cover") or data.get("cover") or "",
                     "video_url": video_url,
                     "audio_url": data.get("music") or video_url,
-                    "hashtags": extract_hashtags_from_data(raw_title),
-                    "keywords": [],
                 }
     except Exception:
         pass
@@ -1102,7 +769,7 @@ def extract_tiktok_no_watermark(url: str) -> Optional[Dict[str, Any]]:
 
 
 def extract_twitter_x_api(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts X/Twitter videos, GIFs & real hashtags via fxtwitter API."""
+    """Extracts X/Twitter videos & GIFs via fxtwitter API."""
     try:
         m = re.search(r"(?:twitter\.com|x\.com)/([^/?#]+)/status/(\d+)", url)
         if not m:
@@ -1130,8 +797,6 @@ def extract_twitter_x_api(url: str) -> Optional[Dict[str, Any]]:
                     "thumbnail": thumb,
                     "video_url": video_url,
                     "image_url": photos[0].get("url") if photos else thumb,
-                    "hashtags": extract_hashtags_from_data(full_text),
-                    "keywords": [],
                 }
     except Exception:
         pass
@@ -1139,7 +804,7 @@ def extract_twitter_x_api(url: str) -> Optional[Dict[str, Any]]:
 
 
 def extract_artstation_project(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts high-res 3D shorts, turntable videos, 4K artworks & official tags/keywords from ArtStation."""
+    """Extracts high-res 3D shorts, turntable videos & 4K artworks from ArtStation."""
     try:
         m = re.search(r"artstation\.com/(?:artwork|projects)/([a-zA-Z0-9_-]+)", url)
         if not m:
@@ -1178,11 +843,6 @@ def extract_artstation_project(url: str) -> Optional[Dict[str, Any]]:
                         except Exception:
                             pass
 
-        software_names = [
-            s.get("name") for s in (data.get("software_items") or []) if isinstance(s, dict) and s.get("name")
-        ]
-        desc_raw = re.sub(r"<[^>]+>", " ", str(data.get("description") or ""))
-
         return {
             "title": data.get("title") or f"ArtStation_{project_hash}",
             "uploader": (data.get("user") or {}).get("full_name") or "ArtStation Artist",
@@ -1191,8 +851,6 @@ def extract_artstation_project(url: str) -> Optional[Dict[str, Any]]:
             "video_url": video_url,
             "embed_url": embed_url,
             "image_url": best_image,
-            "hashtags": extract_hashtags_from_data(desc_raw),
-            "keywords": extract_keywords_from_data([data.get("tags") or [], software_names]),
         }
     except Exception:
         pass
@@ -1216,19 +874,6 @@ def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, 
         if not title_match:
             title_match = re.search(r"<title>([^<]+)</title>", page, re.I)
         title = html.unescape(title_match.group(1)).strip() if title_match else f"{platform.title()} Media"
-
-        desc_match = re.search(
-            r'<meta[^>]+(?:property=["\']og:description["\']|name=["\']description["\'])[^>]+content=["\']([^"\']+)["\']',
-            page,
-            re.I,
-        )
-        desc_text = html.unescape(desc_match.group(1)) if desc_match else ""
-
-        kw_list: List[str] = []
-        for og_t in re.findall(
-            r'<meta[^>]+property=["\'](?:og:video:tag|article:tag)["\'][^>]+content=["\']([^"\']+)["\']', page, re.I
-        ):
-            kw_list.append(html.unescape(og_t).strip())
 
         og_img_match = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', page, re.I)
         best_img = html.unescape(og_img_match.group(1)) if og_img_match else ""
@@ -1279,7 +924,7 @@ def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, 
                 px_id = px_id_match.group(1)
                 try:
                     api_px = cffi_requests.get(
-                        f"https://api.500px.com/v1/photos?ids={px_id}&image_size[]=2048&image_size[]=1600&image_size[]=1080&tags=1",
+                        f"https://api.500px.com/v1/photos?ids={px_id}&image_size[]=2048&image_size[]=1600&image_size[]=1080",
                         impersonate="chrome",
                         timeout=4.0,
                     )
@@ -1288,8 +933,6 @@ def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, 
                         p_obj = photos_dict.get(px_id) or {}
                         if p_obj.get("name"):
                             title = p_obj["name"]
-                        if p_obj.get("tags"):
-                            kw_list.extend(p_obj.get("tags") or [])
                         imgs_list = p_obj.get("images") or []
                         if imgs_list:
                             imgs_list.sort(key=lambda x: x.get("size", 0), reverse=True)
@@ -1309,8 +952,6 @@ def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, 
                 "thumbnail": best_img,
                 "video_url": video_url if is_safe_media_url(video_url) else None,
                 "image_url": best_img if is_safe_media_url(best_img) else None,
-                "hashtags": extract_hashtags_from_data(title, desc_text),
-                "keywords": extract_keywords_from_data(kw_list),
             }
     except Exception:
         pass
@@ -1370,7 +1011,7 @@ def fetch_from_cobalt_instances(url: str, mode: str, quality: str) -> Optional[s
 
 
 # =====================================================================
-# 3. ULTRA-FAST INFO FETCH (< 1 SECOND)
+# 2. ULTRA-FAST INFO FETCH (< 0.6 SECOND)
 # =====================================================================
 def fast_fetch_info(raw_url: str) -> dict:
     url = extract_clean_url(raw_url)
@@ -1386,7 +1027,7 @@ def fast_fetch_info(raw_url: str) -> dict:
             return {k: v for k, v in cached_info.items() if not k.startswith("_")}
 
     if platform == "YOUTUBE":
-        yt_result = extract_youtube_seo_and_thumb(url)
+        yt_result = extract_youtube_thumb_fast(url)
         with CACHE_LOCK:
             INFO_CACHE[cache_key] = {**yt_result, "_ts": time.time()}
         return yt_result
@@ -1403,8 +1044,6 @@ def fast_fetch_info(raw_url: str) -> dict:
                 "hd_thumbnail": tw_clip["image_url"] or tw_clip["thumbnail"],
                 "platform": platform,
                 "max_quality": "1080P CLIP",
-                "hashtags": tw_clip.get("hashtags") or [],
-                "keywords": tw_clip.get("keywords") or [],
             }
             with CACHE_LOCK:
                 INFO_CACHE[cache_key] = {
@@ -1426,8 +1065,6 @@ def fast_fetch_info(raw_url: str) -> dict:
                 "hd_thumbnail": ig["image_url"] or ig["thumbnail"],
                 "platform": platform,
                 "max_quality": "1080P HD",
-                "hashtags": ig.get("hashtags") or [],
-                "keywords": ig.get("keywords") or [],
             }
             with CACHE_LOCK:
                 INFO_CACHE[cache_key] = {
@@ -1449,8 +1086,6 @@ def fast_fetch_info(raw_url: str) -> dict:
                 "hd_thumbnail": sc["image_url"] or sc["thumbnail"],
                 "platform": platform,
                 "max_quality": "HD VIDEO",
-                "hashtags": sc.get("hashtags") or [],
-                "keywords": sc.get("keywords") or [],
             }
             with CACHE_LOCK:
                 INFO_CACHE[cache_key] = {
@@ -1473,8 +1108,6 @@ def fast_fetch_info(raw_url: str) -> dict:
                 "hd_thumbnail": tk["thumbnail"],
                 "platform": platform,
                 "max_quality": "NO WATERMARK HD",
-                "hashtags": tk.get("hashtags") or [],
-                "keywords": tk.get("keywords") or [],
             }
             with CACHE_LOCK:
                 INFO_CACHE[cache_key] = {
@@ -1497,8 +1130,6 @@ def fast_fetch_info(raw_url: str) -> dict:
                 "hd_thumbnail": tw.get("image_url") or tw["thumbnail"],
                 "platform": platform,
                 "max_quality": "HD READY",
-                "hashtags": tw.get("hashtags") or [],
-                "keywords": tw.get("keywords") or [],
             }
             with CACHE_LOCK:
                 INFO_CACHE[cache_key] = {
@@ -1520,8 +1151,6 @@ def fast_fetch_info(raw_url: str) -> dict:
                 "hd_thumbnail": art["image_url"] or art["thumbnail"],
                 "platform": platform,
                 "max_quality": "4K READY",
-                "hashtags": art.get("hashtags") or [],
-                "keywords": art.get("keywords") or [],
             }
             with CACHE_LOCK:
                 INFO_CACHE[cache_key] = {
@@ -1543,8 +1172,6 @@ def fast_fetch_info(raw_url: str) -> dict:
             "hd_thumbnail": scraped.get("image_url") or scraped.get("thumbnail") or "",
             "platform": platform,
             "max_quality": "HD READY",
-            "hashtags": scraped.get("hashtags") or [],
-            "keywords": scraped.get("keywords") or [],
         }
         with CACHE_LOCK:
             INFO_CACHE[cache_key] = {
@@ -1576,10 +1203,6 @@ def fast_fetch_info(raw_url: str) -> dict:
             info = json.loads(proc.stdout.splitlines()[0])
             duration = info.get("duration") or 0
             thumb = info.get("thumbnail") or ""
-            hashtags = extract_hashtags_from_data(info.get("title"), info.get("description"))
-            keywords = extract_keywords_from_data(
-                [info.get("tags") or [], info.get("categories") or [], info.get("genre") or ""]
-            )
             result = {
                 "title": info.get("title") or f"{platform.title()} Media",
                 "uploader": info.get("uploader") or info.get("channel") or platform.title(),
@@ -1589,8 +1212,6 @@ def fast_fetch_info(raw_url: str) -> dict:
                 "hd_thumbnail": thumb,
                 "platform": platform,
                 "max_quality": "HD READY",
-                "hashtags": hashtags,
-                "keywords": keywords,
             }
             with CACHE_LOCK:
                 INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
@@ -1607,13 +1228,11 @@ def fast_fetch_info(raw_url: str) -> dict:
         "hd_thumbnail": "",
         "platform": platform,
         "max_quality": "HD READY",
-        "hashtags": (scraped or {}).get("hashtags") or [],
-        "keywords": (scraped or {}).get("keywords") or [],
     }
 
 
 # =====================================================================
-# 4. UNIVERSAL MULTI-ENGINE VIDEO / AUDIO DOWNLOADER
+# 3. UNIVERSAL MULTI-ENGINE VIDEO / AUDIO DOWNLOADER
 # =====================================================================
 def download_direct_url_to_file(
     direct_url: str,
@@ -1933,7 +1552,7 @@ def download_universal_media(
 
 
 # =====================================================================
-# 5. FFMPEG EXACT CLIP TRIMMER (1s to 5m Precision Cut)
+# 4. FFMPEG EXACT CLIP TRIMMER (1s to 5m Precision Cut)
 # =====================================================================
 def cut_media_segment_exact(
     source_url: str,
@@ -1984,7 +1603,7 @@ def cut_media_segment_exact(
 
 
 # =====================================================================
-# 6. BACKGROUND JOB WORKER
+# 5. BACKGROUND JOB WORKER
 # =====================================================================
 def process_download_job(
     job_id: str,
@@ -2039,62 +1658,11 @@ def process_download_job(
 
 
 # =====================================================================
-# 7. REVIEWS & FEEDBACK STORAGE
-# =====================================================================
-DEFAULT_FEEDBACK = [
-    {
-        "id": "seed-1",
-        "name": "Aarav Edits",
-        "type": "review",
-        "platform": "TWITCH",
-        "rating": 5,
-        "message": "Twitch clips, Instagram Stories/Reels aur Hashtags + Keywords Extractor ekdum tezi se kaam kar rahe hain!",
-        "status": "Verified User",
-        "time": "Today",
-    },
-]
-
-
-def load_feedback_list() -> List[dict]:
-    with FEEDBACK_LOCK:
-        if not FEEDBACK_FILE.exists():
-            FEEDBACK_FILE.write_text(json.dumps(DEFAULT_FEEDBACK), encoding="utf-8")
-            return list(DEFAULT_FEEDBACK)
-        try:
-            data = json.loads(FEEDBACK_FILE.read_text(encoding="utf-8"))
-            return data if isinstance(data, list) else list(DEFAULT_FEEDBACK)
-        except Exception:
-            return list(DEFAULT_FEEDBACK)
-
-
-def save_feedback_item(item: dict) -> List[dict]:
-    with FEEDBACK_LOCK:
-        try:
-            current = (
-                json.loads(FEEDBACK_FILE.read_text(encoding="utf-8"))
-                if FEEDBACK_FILE.exists()
-                else list(DEFAULT_FEEDBACK)
-            )
-            if not isinstance(current, list):
-                current = list(DEFAULT_FEEDBACK)
-        except Exception:
-            current = list(DEFAULT_FEEDBACK)
-        current.insert(0, item)
-        FEEDBACK_FILE.write_text(json.dumps(current[:60]), encoding="utf-8")
-        return current
-
-
-# =====================================================================
-# 8. API ROUTES
+# 6. API ROUTES
 # =====================================================================
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health_check():
     return {"status": "ok", "service": "GlobiFree.Pro"}
-
-
-@app.get("/api/bot_status")
-def get_bot_status():
-    return BOT_STATE
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -2285,31 +1853,3 @@ def stream_prepared_file(
     safe_name = ascii_safe_filename(Path(filename).stem) + target_file.suffix
     background_tasks.add_task(cleanup_dir, job_dir)
     return FileResponse(path=str(target_file), filename=safe_name, media_type="application/octet-stream")
-
-
-@app.get("/api/feedback")
-def get_feedback():
-    return {"items": load_feedback_list()}
-
-
-@app.post("/api/feedback")
-def post_feedback(
-    name: str = Form("Anonymous User"),
-    feedback_type: str = Form("review"),
-    platform: str = Form("INSTAGRAM"),
-    rating: int = Form(5),
-    media_url: Optional[str] = Form(None),
-    message: str = Form(...),
-):
-    item = {
-        "id": str(uuid.uuid4())[:8],
-        "name": (name.strip() or "Anonymous User")[:40],
-        "type": "issue" if feedback_type == "issue" else "review",
-        "platform": platform.strip().upper()[:20],
-        "rating": max(1, min(5, int(rating))),
-        "media_url": extract_clean_url(media_url)[:180],
-        "message": message.strip()[:400],
-        "status": "Logged for Admin Check" if feedback_type == "issue" else "Verified Feedback",
-        "time": time.strftime("%d %b, %I:%M %p"),
-    }
-    return {"status": "ok", "items": save_feedback_item(item)}
