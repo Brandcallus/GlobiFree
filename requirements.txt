@@ -3,4 +3,4 @@ uvicorn[standard]
 python-multipart
 yt-dlp[default]
 curl-cffi
-pytubefix
+gallery-dl
