@@ -40,9 +40,6 @@ CACHE_LOCK = threading.Lock()
 JOBS_LOCK = threading.Lock()
 FEEDBACK_LOCK = threading.Lock()
 
-# Persistent HTTP Session for fast TLS reuse
-HTTP_SESSION = cffi_requests.Session(impersonate="chrome")
-
 YOUTUBE_RESTRICTION_MESSAGE = (
     "For YouTube, no download formats other than the thumbnail are currently available, "
     "but you can view this video's hashtags and keywords."
@@ -107,16 +104,17 @@ def keep_alive_bot_loop():
 
         for endpoint in (f"{target_base}/health", f"{target_base}/"):
             try:
-                HTTP_SESSION.get(
+                cffi_requests.get(
                     endpoint,
                     headers={"User-Agent": "GlobiFree-KeepAlive-Bot/4.0"},
+                    impersonate="chrome",
                     timeout=8,
                 )
             except Exception:
                 pass
 
         try:
-            HTTP_SESSION.get(f"http://127.0.0.1:{port}/health", timeout=4)
+            cffi_requests.get(f"http://127.0.0.1:{port}/health", timeout=4)
         except Exception:
             pass
 
@@ -218,10 +216,7 @@ def extract_keywords_from_data(
     fallback_desc: str = "",
     hashtags_list: Optional[List[str]] = None,
 ) -> List[str]:
-    """
-    1. First collects 100% official studio keywords/tags (YouTube keywords, meta keywords, Twitch/ArtStation tags).
-    2. If official tags are fewer than 3, also extracts clean topic keywords from hashtags & title/description.
-    """
+    """Collects official studio keywords/tags and supplements with clean topic keywords."""
     found: List[str] = []
     seen = set()
 
@@ -237,7 +232,6 @@ def extract_keywords_from_data(
             seen.add(low)
             found.append(clean)
 
-    # 1. Add all official tags/keywords first
     if official_tags:
         if isinstance(official_tags, (list, tuple, set)):
             for item in official_tags:
@@ -251,14 +245,11 @@ def extract_keywords_from_data(
             for part in official_tags.split(","):
                 _add_kw(part)
 
-    # 2. Also include hashtag words (without #) and key topic phrases if official tags are scarce
     if len(found) < 5:
         for h in (hashtags_list or []):
             _add_kw(h.lstrip("#"))
 
-        # Extract capitalized or gaming/topic terms from title & description
         combined_text = f"{fallback_title} {fallback_desc}"
-        # Remove URLs and handles
         combined_text = re.sub(r"https?://\S+|@\w+", " ", combined_text)
         words = re.findall(r"[A-Za-z0-9\u0080-\uffff]{3,}", combined_text)
         for w in words:
@@ -295,7 +286,9 @@ def is_url_actual_video(candidate_url: str, referer: str = "https://www.snapchat
             "Referer": referer,
             "Range": "bytes=0-64",
         }
-        resp = HTTP_SESSION.get(candidate_url, headers=headers, allow_redirects=True, timeout=4)
+        resp = cffi_requests.get(
+            candidate_url, headers=headers, impersonate="chrome", allow_redirects=True, timeout=4
+        )
         ctype = (resp.headers.get("content-type") or "").lower()
         if "video/" in ctype:
             return True
@@ -447,12 +440,11 @@ def extract_youtube_seo_and_thumb(url: str) -> Dict[str, Any]:
     }
     lock = threading.Lock()
 
-    # Worker 1: InnerTube ANDROID_VR Player API (Bypasses cloud IP LOGIN_REQUIRED, gets keywords + shortDescription in ~350ms)
     def _task_innertube_player():
         if not vid_id:
             return
         try:
-            resp = HTTP_SESSION.post(
+            resp = cffi_requests.post(
                 "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
                 json={
                     "videoId": vid_id,
@@ -475,6 +467,7 @@ def extract_youtube_seo_and_thumb(url: str) -> Dict[str, Any]:
                     "Content-Type": "application/json",
                 },
                 cookies=YT_CONSENT_COOKIES,
+                impersonate="chrome",
                 timeout=3.5,
             )
             if resp.status_code == 200:
@@ -498,12 +491,11 @@ def extract_youtube_seo_and_thumb(url: str) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # Worker 2: InnerTube WEB 'next' API (Never blocked on cloud IPs! Returns full video description & hashtags in ~350ms)
     def _task_innertube_next():
         if not vid_id:
             return
         try:
-            resp = HTTP_SESSION.post(
+            resp = cffi_requests.post(
                 "https://www.youtube.com/youtubei/v1/next?prettyPrint=false",
                 json={
                     "videoId": vid_id,
@@ -518,16 +510,15 @@ def extract_youtube_seo_and_thumb(url: str) -> Dict[str, Any]:
                 },
                 headers={"User-Agent": CHROME_UA, "Content-Type": "application/json"},
                 cookies=YT_CONSENT_COOKIES,
+                impersonate="chrome",
                 timeout=3.5,
             )
             if resp.status_code == 200:
                 raw_text = resp.text
-                # Extract attributedDescriptionBodyText.content (full description in modern YouTube)
-                 desc_matches = re.findall(
+                desc_matches = re.findall(
                     r'"attributedDescriptionBodyText"\s*:\s*\{\s*"content"\s*:\s*"((?:\\.|[^"\\])*)"',
                     raw_text,
                 )
-                # Also extract any hashtag command texts
                 ht_matches = re.findall(r'"/hashtag/([\w\u0080-\uffff]+)"', raw_text)
                 with lock:
                     for dm in desc_matches:
@@ -540,13 +531,13 @@ def extract_youtube_seo_and_thumb(url: str) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # Worker 3: Direct Watch Page HTML Fast Regex Parse (<meta name="keywords">, og:video:tag, shortDescription)
     def _task_watch_html():
         try:
-            resp = HTTP_SESSION.get(
+            resp = cffi_requests.get(
                 clean_watch_url,
                 headers={"User-Agent": CHROME_UA, "Accept-Language": "en-US,en;q=0.9"},
                 cookies=YT_CONSENT_COOKIES,
+                impersonate="chrome",
                 timeout=3.5,
             )
             if resp.status_code == 200:
@@ -588,7 +579,6 @@ def extract_youtube_seo_and_thumb(url: str) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # Run all 3 workers in parallel!
     with ThreadPoolExecutor(max_workers=3) as ex:
         futures = [
             ex.submit(_task_innertube_player),
@@ -601,11 +591,11 @@ def extract_youtube_seo_and_thumb(url: str) -> Dict[str, Any]:
             except Exception:
                 pass
 
-    # Quick oEmbed fallback ONLY if title is still empty
     if not shared["title"]:
         try:
-            oemb = HTTP_SESSION.get(
+            oemb = cffi_requests.get(
                 f"https://www.youtube.com/oembed?url={quote(clean_watch_url)}&format=json",
+                impersonate="chrome",
                 timeout=2.5,
             )
             if oemb.status_code == 200:
@@ -646,10 +636,10 @@ def extract_youtube_seo_and_thumb(url: str) -> Dict[str, Any]:
 
 
 # =====================================================================
-# 2. DEDICATED FAST PLATFORM EXTRACTORS (Twitch, Instagram, Snapchat, TikTok, X, ArtStation)
+# 2. DEDICATED FAST PLATFORM EXTRACTORS
 # =====================================================================
 def extract_twitch_clip(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts Twitch Clips directly via Twitch GQL API with signed MP4 URLs in ~0.4s."""
+    """Extracts Twitch Clips directly via Twitch GQL API with signed MP4 URLs."""
     m = re.search(r"(?:twitch\.tv/[^/]+/clip/|clips\.twitch\.tv/)([A-Za-z0-9_-]+)", url)
     if not m:
         return None
@@ -679,7 +669,9 @@ def extract_twitch_clip(url: str) -> Optional[Dict[str, Any]]:
                 "variables": {"slug": slug},
             },
         ]
-        resp = HTTP_SESSION.post("https://gql.twitch.tv/gql", json=gql_payload, headers=headers, timeout=4.5)
+        resp = cffi_requests.post(
+            "https://gql.twitch.tv/gql", json=gql_payload, headers=headers, impersonate="chrome", timeout=4.5
+        )
         if resp.status_code == 200:
             results = resp.json()
             if isinstance(results, list) and len(results) >= 1:
@@ -737,7 +729,7 @@ def extract_instagram_media(url: str) -> Optional[Dict[str, Any]]:
 
         for api_host in ("https://api.vxinstagram.com", "https://d.ddinstagram.com"):
             try:
-                resp = HTTP_SESSION.get(f"{api_host}/{story_path}", timeout=4.0)
+                resp = cffi_requests.get(f"{api_host}/{story_path}", impersonate="chrome", timeout=4.0)
                 if resp.status_code == 200 and "application/json" in (resp.headers.get("content-type") or ""):
                     data = resp.json()
                     media_list = data.get("media_extended") or data.get("mediaURLs") or []
@@ -793,13 +785,12 @@ def extract_instagram_media(url: str) -> Optional[Dict[str, Any]]:
     if not shortcode:
         return None
 
-    # Run vxinstagram API and Instagram Embed page in parallel for <0.7s response!
     results: List[Dict[str, Any]] = []
     lock = threading.Lock()
 
     def _try_vx():
         try:
-            resp = HTTP_SESSION.get(f"https://api.vxinstagram.com/p/{shortcode}", timeout=3.5)
+            resp = cffi_requests.get(f"https://api.vxinstagram.com/p/{shortcode}", impersonate="chrome", timeout=3.5)
             if resp.status_code == 200 and "application/json" in (resp.headers.get("content-type") or ""):
                 data = resp.json()
                 media_list = data.get("media_extended") or data.get("mediaURLs") or []
@@ -840,9 +831,10 @@ def extract_instagram_media(url: str) -> Optional[Dict[str, Any]]:
     def _try_embed():
         try:
             embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
-            resp = HTTP_SESSION.get(
+            resp = cffi_requests.get(
                 embed_url,
                 headers={"User-Agent": CHROME_UA, "Accept-Language": "en-US,en;q=0.9"},
+                impersonate="chrome",
                 timeout=4.0,
             )
             if resp.status_code == 200:
@@ -895,7 +887,6 @@ def extract_instagram_media(url: str) -> Optional[Dict[str, Any]]:
                 pass
 
     if results:
-        # Merge best video_url + hashtags from both results
         best = results[0]
         for r in results[1:]:
             if not best.get("video_url") and r.get("video_url"):
@@ -913,9 +904,10 @@ def extract_instagram_media(url: str) -> Optional[Dict[str, Any]]:
 def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
     """Extracts verified MP4 video, HD thumbnail, hashtags & keywords from Snapchat Spotlight and Stories."""
     try:
-        resp = HTTP_SESSION.get(
+        resp = cffi_requests.get(
             url,
             headers={"User-Agent": CHROME_UA, "Accept-Language": "en-US,en;q=0.9"},
+            impersonate="chrome",
             allow_redirects=True,
             timeout=5.0,
         )
@@ -928,9 +920,10 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
         canonical_url = f"https://www.snapchat.com/spotlight/{spot_m.group(1)}" if spot_m else resolved_url
         if spot_m and "/@" in resolved_url:
             try:
-                c_resp = HTTP_SESSION.get(
+                c_resp = cffi_requests.get(
                     canonical_url,
                     headers={"User-Agent": CHROME_UA, "Accept-Language": "en-US,en;q=0.9"},
+                    impersonate="chrome",
                     allow_redirects=True,
                     timeout=4.5,
                 )
@@ -1077,11 +1070,12 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
 
 
 def extract_tiktok_no_watermark(url: str) -> Optional[Dict[str, Any]]:
-    """Fetches TikTok HD No-Watermark video, metadata, hashtags & keywords via TikWM API in ~0.5s."""
+    """Fetches TikTok HD No-Watermark video, metadata, hashtags & keywords via TikWM API."""
     try:
-        resp = HTTP_SESSION.post(
+        resp = cffi_requests.post(
             "https://www.tikwm.com/api/",
             data={"url": url, "hd": 1},
+            impersonate="chrome",
             timeout=5.0,
         )
         if resp.status_code == 200:
@@ -1116,14 +1110,14 @@ def extract_tiktok_no_watermark(url: str) -> Optional[Dict[str, Any]]:
 
 
 def extract_twitter_x_api(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts X/Twitter videos, GIFs, hashtags & keywords via fxtwitter API in ~0.4s."""
+    """Extracts X/Twitter videos, GIFs, hashtags & keywords via fxtwitter API."""
     try:
         m = re.search(r"(?:twitter\.com|x\.com)/([^/?#]+)/status/(\d+)", url)
         if not m:
             return None
         user, status_id = m.group(1), m.group(2)
         api_url = f"https://api.fxtwitter.com/{user}/status/{status_id}"
-        resp = HTTP_SESSION.get(api_url, timeout=4.5)
+        resp = cffi_requests.get(api_url, impersonate="chrome", timeout=4.5)
         if resp.status_code == 200:
             tweet = (resp.json() or {}).get("tweet") or {}
             media = tweet.get("media") or {}
@@ -1166,7 +1160,7 @@ def extract_artstation_project(url: str) -> Optional[Dict[str, Any]]:
             return None
         project_hash = m.group(1)
         api_url = f"https://www.artstation.com/projects/{project_hash}.json"
-        resp = HTTP_SESSION.get(api_url, timeout=5.0)
+        resp = cffi_requests.get(api_url, impersonate="chrome", timeout=5.0)
         if resp.status_code != 200:
             return None
         data = resp.json()
@@ -1190,7 +1184,7 @@ def extract_artstation_project(url: str) -> Optional[Dict[str, Any]]:
                     embed_url = iframe_match.group(1)
                     if "artstation.com/embed/" in embed_url:
                         try:
-                            emb_resp = HTTP_SESSION.get(embed_url, timeout=4.0)
+                            emb_resp = cffi_requests.get(embed_url, impersonate="chrome", timeout=4.0)
                             emb_mp4 = re.search(r'(https?://cdn[^\s"\'<>]+?\.mp4[^\s"\'<>]*)', emb_resp.text)
                             if emb_mp4:
                                 video_url = html.unescape(emb_mp4.group(1))
@@ -1234,7 +1228,7 @@ def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, 
             "Referer": f"https://{urlparse(url).netloc}/",
             "Accept-Language": "en-US,en;q=0.9",
         }
-        resp = HTTP_SESSION.get(url, headers=headers, allow_redirects=True, timeout=5.0)
+        resp = cffi_requests.get(url, headers=headers, impersonate="chrome", allow_redirects=True, timeout=5.0)
         if resp.status_code != 200:
             return None
         page = resp.text
@@ -1302,8 +1296,9 @@ def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, 
             if px_id_match:
                 px_id = px_id_match.group(1)
                 try:
-                    api_px = HTTP_SESSION.get(
+                    api_px = cffi_requests.get(
                         f"https://api.500px.com/v1/photos?ids={px_id}&image_size[]=2048&image_size[]=1600&image_size[]=1080&tags=1",
+                        impersonate="chrome",
                         timeout=4.0,
                     )
                     if api_px.status_code == 200:
@@ -1373,7 +1368,9 @@ def fetch_from_cobalt_instances(url: str, mode: str, quality: str) -> Optional[s
                 "Content-Type": "application/json",
                 "User-Agent": CHROME_UA,
             }
-            resp = HTTP_SESSION.post(f"{host}/", json=payload, headers=headers, timeout=4.0)
+            resp = cffi_requests.post(
+                f"{host}/", json=payload, headers=headers, impersonate="chrome", timeout=4.0
+            )
             if resp.status_code == 200:
                 data = resp.json()
                 dl_url = data.get("url")
@@ -1414,14 +1411,12 @@ def fast_fetch_info(raw_url: str) -> dict:
         if cached_info and (time.time() - cached_info.get("_ts", 0) < 1800):
             return {k: v for k, v in cached_info.items() if not k.startswith("_")}
 
-    # 1. YouTube Mode: Parallel InnerTube + Next + Watch HTML (< 0.8s)
     if platform == "YOUTUBE":
         yt_result = extract_youtube_seo_and_thumb(url)
         with CACHE_LOCK:
             INFO_CACHE[cache_key] = {**yt_result, "_ts": time.time()}
         return yt_result
 
-    # 2. Twitch Mode: GQL Direct Clip Extractor (< 0.5s)
     if platform == "TWITCH":
         tw_clip = extract_twitch_clip(url)
         if tw_clip:
@@ -1445,7 +1440,6 @@ def fast_fetch_info(raw_url: str) -> dict:
                 }
             return result
 
-    # 3. Instagram Mode: Parallel vxinstagram + Embed (< 0.7s)
     if platform == "INSTAGRAM":
         ig = extract_instagram_media(url)
         if ig:
@@ -1469,7 +1463,6 @@ def fast_fetch_info(raw_url: str) -> dict:
                 }
             return result
 
-    # 4. Snapchat Mode (< 0.8s)
     if platform == "SNAPCHAT":
         sc = extract_snapchat_media(url)
         if sc:
@@ -1494,7 +1487,6 @@ def fast_fetch_info(raw_url: str) -> dict:
                 }
             return result
 
-    # 5. TikTok Mode (< 0.6s)
     if platform == "TIKTOK":
         tk = extract_tiktok_no_watermark(url)
         if tk:
@@ -1519,7 +1511,6 @@ def fast_fetch_info(raw_url: str) -> dict:
                 }
             return result
 
-    # 6. X / Twitter Mode (< 0.5s)
     if platform == "X / TWITTER":
         tw = extract_twitter_x_api(url)
         if tw:
@@ -1543,7 +1534,6 @@ def fast_fetch_info(raw_url: str) -> dict:
                 }
             return result
 
-    # 7. ArtStation Mode (< 0.6s)
     if platform == "ARTSTATION":
         art = extract_artstation_project(url)
         if art:
@@ -1568,7 +1558,6 @@ def fast_fetch_info(raw_url: str) -> dict:
                 }
             return result
 
-    # 8. Fast OpenGraph / Page Scraper first (0.5s) for Pinterest, Behance, Flickr, 500px, Facebook, Reddit, Vimeo
     scraped = extract_design_or_photo_page(url, platform)
     if scraped and (scraped.get("thumbnail") or scraped.get("video_url")):
         result = {
@@ -1591,7 +1580,6 @@ def fast_fetch_info(raw_url: str) -> dict:
             }
         return result
 
-    # 9. Quick yt-dlp fallback ONLY if OpenGraph had no thumbnail
     cmd = [
         "yt-dlp",
         "--dump-json",
@@ -1670,7 +1658,9 @@ def download_direct_url_to_file(
         headers = {"User-Agent": CHROME_UA}
         if referer:
             headers["Referer"] = referer
-        resp = HTTP_SESSION.get(direct_url, headers=headers, allow_redirects=True, timeout=45)
+        resp = cffi_requests.get(
+            direct_url, headers=headers, impersonate="chrome", allow_redirects=True, timeout=45
+        )
         if resp.status_code != 200 or not resp.content:
             return None
 
@@ -1816,10 +1806,11 @@ def download_universal_media(
 
     platform = detect_platform_name(url)
 
-    # 0. Instant Cache Hit: If Fetch Fast already found the direct video_url, download it immediately!
     with CACHE_LOCK:
         cached = INFO_CACHE.get(url.strip()) or {}
-    cached_vid_url = cached.get("_audio_url") if (mode == "audio" and cached.get("_audio_url")) else cached.get("_video_url")
+    cached_vid_url = (
+        cached.get("_audio_url") if (mode == "audio" and cached.get("_audio_url")) else cached.get("_video_url")
+    )
     if cached_vid_url:
         res = download_direct_url_to_file(
             cached_vid_url,
@@ -1937,7 +1928,6 @@ def download_universal_media(
             if res:
                 return res
 
-    # Try Parallel Cobalt Tunnel first before heavy yt-dlp for faster response
     cobalt_stream = fetch_from_cobalt_instances(url, mode, quality)
     if cobalt_stream:
         res = download_direct_url_to_file(cobalt_stream, job_dir, mode, format_type, quality, is_muted)
@@ -2175,9 +2165,9 @@ def download_hd_thumbnail(
 
     try:
         headers = {"User-Agent": CHROME_UA, "Referer": f"https://{urlparse(clean_url).netloc}/"}
-        resp = HTTP_SESSION.get(thumb_url, headers=headers, timeout=10)
+        resp = cffi_requests.get(thumb_url, headers=headers, impersonate="chrome", timeout=10)
         if resp.status_code != 200 and info.get("thumbnail"):
-            resp = HTTP_SESSION.get(info["thumbnail"], headers=headers, timeout=10)
+            resp = cffi_requests.get(info["thumbnail"], headers=headers, impersonate="chrome", timeout=10)
         raw_img_path.write_bytes(resp.content)
 
         proc = subprocess.run(
