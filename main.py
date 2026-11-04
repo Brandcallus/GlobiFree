@@ -5,11 +5,12 @@ import json
 import time
 import uuid
 import shutil
+import html
 import threading
 import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any, List
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, Form, HTTPException, Query, BackgroundTasks
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -38,7 +39,7 @@ CACHE_LOCK = threading.Lock()
 JOBS_LOCK = threading.Lock()
 FEEDBACK_LOCK = threading.Lock()
 
-# Block any shady redirect/adware domains from ever passing through
+# Block any shady redirect/adware domains
 BLOCKED_AD_DOMAINS = (
     "linkbrisora",
     "pathzenora",
@@ -65,7 +66,7 @@ def auto_upgrade_extractors():
                     "-U",
                     "--pre",
                     "yt-dlp[default]",
-                    "pytubefix",
+                    "gallery-dl",
                 ],
                 capture_output=True,
                 timeout=120,
@@ -87,6 +88,11 @@ def is_safe_media_url(dl_url: Optional[str]) -> bool:
         if bad in low:
             return False
     return True
+
+
+def is_blocked_platform(url: str) -> bool:
+    u = (url or "").lower()
+    return any(h in u for h in ("youtube.com", "youtu.be", "youtube-nocookie.com"))
 
 
 def sanitize_filename(name: str) -> str:
@@ -163,40 +169,35 @@ def time_str_to_seconds(t_str: Optional[str]) -> Optional[float]:
 
 def detect_platform_name(url: str) -> str:
     u = url.lower()
-    if "youtube.com" in u or "youtu.be" in u:
-        return "YOUTUBE"
-    if "instagram.com" in u:
+    if "instagram.com" in u or "instagr.am" in u:
         return "INSTAGRAM"
-    if "pinterest." in u or "pin.it" in u:
-        return "PINTEREST"
-    if "twitter.com" in u or "x.com" in u or "t.co" in u:
-        return "X / TWITTER"
     if "facebook.com" in u or "fb.watch" in u or "fb.com" in u:
         return "FACEBOOK"
-    if "reddit.com" in u or "redd.it" in u:
-        return "REDDIT"
+    if "twitter.com" in u or "x.com" in u or "t.co" in u:
+        return "X / TWITTER"
     if "tiktok.com" in u:
         return "TIKTOK"
-    if "threads.net" in u:
+    if "pinterest." in u or "pin.it" in u:
+        return "PINTEREST"
+    if "reddit.com" in u or "redd.it" in u:
+        return "REDDIT"
+    if "vimeo.com" in u:
+        return "VIMEO"
+    if "twitch.tv" in u:
+        return "TWITCH"
+    if "artstation.com" in u:
+        return "ARTSTATION"
+    if "behance.net" in u or "be.net" in u:
+        return "BEHANCE"
+    if "flickr.com" in u or "flic.kr" in u:
+        return "FLICKR"
+    if "500px.com" in u:
+        return "500PX"
+    if "threads.net" in u or "threads.com" in u:
         return "THREADS"
     if "soundcloud.com" in u:
         return "SOUNDCLOUD"
-    if "twitch.tv" in u:
-        return "TWITCH"
-    if "vimeo.com" in u:
-        return "VIMEO"
     return "UNIVERSAL"
-
-
-def extract_youtube_id(url: str) -> Optional[str]:
-    patterns = [
-        r"(?:v=|\/videos\/|embed\/|youtu\.be\/|\/v\/|\/e\/|watch\?v=|&v=|\/shorts\/|\/live\/)([a-zA-Z0-9_-]{11})",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            return match.group(1)
-    return None
 
 
 def update_job(job_id: Optional[str], **kwargs):
@@ -209,55 +210,354 @@ def update_job(job_id: Optional[str], **kwargs):
 
 
 # =====================================================================
-# 1. FAST INFO FETCH
+# 1. PLATFORM-SPECIFIC API EXTRACTORS (TikTok, X, ArtStation, Behance, Flickr, 500px, Pinterest)
+# =====================================================================
+def extract_tiktok_no_watermark(url: str) -> Optional[Dict[str, Any]]:
+    """Fetches TikTok HD No-Watermark video & metadata via TikWM API."""
+    try:
+        resp = cffi_requests.post(
+            "https://www.tikwm.com/api/",
+            data={"url": url, "hd": 1},
+            impersonate="chrome",
+            timeout=8,
+        )
+        if resp.status_code == 200:
+            payload = resp.json()
+            data = payload.get("data") or {}
+            video_url = data.get("hdplay") or data.get("play")
+            if video_url and not str(video_url).startswith("http"):
+                video_url = f"https://www.tikwm.com{video_url}"
+            if is_safe_media_url(video_url):
+                return {
+                    "title": data.get("title") or "TikTok Video",
+                    "uploader": (data.get("author") or {}).get("nickname") or "TikTok Creator",
+                    "duration": data.get("duration") or 0,
+                    "thumbnail": data.get("origin_cover") or data.get("cover") or "",
+                    "video_url": video_url,
+                    "audio_url": data.get("music") or video_url,
+                }
+    except Exception:
+        pass
+    return None
+
+
+def extract_twitter_x_api(url: str) -> Optional[Dict[str, Any]]:
+    """Extracts X/Twitter videos & GIFs via fxtwitter/vxtwitter API."""
+    try:
+        m = re.search(r"(?:twitter\.com|x\.com)/([^/?#]+)/status/(\d+)", url)
+        if not m:
+            return None
+        user, status_id = m.group(1), m.group(2)
+        api_url = f"https://api.fxtwitter.com/{user}/status/{status_id}"
+        resp = cffi_requests.get(api_url, impersonate="chrome", timeout=7)
+        if resp.status_code == 200:
+            tweet = (resp.json() or {}).get("tweet") or {}
+            media = tweet.get("media") or {}
+            videos = media.get("videos") or []
+            photos = media.get("photos") or []
+            video_url = videos[0].get("url") if videos else None
+            thumb = (
+                videos[0].get("thumbnail_url")
+                if videos
+                else (photos[0].get("url") if photos else "")
+            )
+            if video_url or thumb:
+                return {
+                    "title": (tweet.get("text") or f"X Post {status_id}")[:90],
+                    "uploader": (tweet.get("author") or {}).get("name") or user,
+                    "duration": videos[0].get("duration", 0) if videos else 0,
+                    "thumbnail": thumb,
+                    "video_url": video_url,
+                    "image_url": photos[0].get("url") if photos else thumb,
+                }
+    except Exception:
+        pass
+    return None
+
+
+def extract_artstation_project(url: str) -> Optional[Dict[str, Any]]:
+    """Extracts high-res 3D shorts, turntable videos & 4K artworks from ArtStation."""
+    try:
+        m = re.search(r"artstation\.com/(?:artwork|projects)/([a-zA-Z0-9_-]+)", url)
+        if not m:
+            return None
+        project_hash = m.group(1)
+        api_url = f"https://www.artstation.com/projects/{project_hash}.json"
+        resp = cffi_requests.get(api_url, impersonate="chrome", timeout=8)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        assets = data.get("assets") or []
+        video_url = None
+        embed_url = None
+        best_image = data.get("cover_url") or ""
+
+        for asset in assets:
+            img = asset.get("image_url") or ""
+            if img and (not best_image or "/4k/" in img or "/large/" in img):
+                best_image = img
+            player_html = asset.get("player_embedded") or ""
+            if player_html:
+                mp4_match = re.search(r'src=["\'](https?://[^"\']+\.mp4[^"\']*)["\']', player_html)
+                if mp4_match:
+                    video_url = mp4_match.group(1)
+                    break
+                iframe_match = re.search(r'src=["\'](https?://[^"\']+)["\']', player_html)
+                if iframe_match and not embed_url:
+                    embed_url = iframe_match.group(1)
+                    # Check if the ArtStation video clip page itself has a direct MP4
+                    if "artstation.com/embed/" in embed_url:
+                        try:
+                            emb_resp = cffi_requests.get(embed_url, impersonate="chrome", timeout=6)
+                            emb_mp4 = re.search(r'(https?://cdn[^\s"\'<>]+?\.mp4[^\s"\'<>]*)', emb_resp.text)
+                            if emb_mp4:
+                                video_url = html.unescape(emb_mp4.group(1))
+                                break
+                        except Exception:
+                            pass
+
+        return {
+            "title": data.get("title") or f"ArtStation_{project_hash}",
+            "uploader": (data.get("user") or {}).get("full_name") or "ArtStation Artist",
+            "duration": 0,
+            "thumbnail": best_image,
+            "video_url": video_url,
+            "embed_url": embed_url,
+            "image_url": best_image,
+        }
+    except Exception:
+        pass
+    return None
+
+
+def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, Any]]:
+    """Extracts high-res videos/photos from Behance, Flickr, 500px, Pinterest, or Instagram."""
+    try:
+        headers = {
+            "Referer": f"https://{urlparse(url).netloc}/",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        # Follow shortlinks like pin.it or flic.kr
+        resp = cffi_requests.get(url, headers=headers, impersonate="chrome", allow_redirects=True, timeout=10)
+        if resp.status_code != 200:
+            return None
+        page = resp.text
+
+        title_match = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']', page, re.I)
+        if not title_match:
+            title_match = re.search(r"<title>([^<]+)</title>", page, re.I)
+        title = html.unescape(title_match.group(1)).strip() if title_match else f"{platform.title()} Media"
+
+        og_img_match = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', page, re.I)
+        best_img = html.unescape(og_img_match.group(1)) if og_img_match else ""
+
+        og_vid_match = re.search(
+            r'<meta[^>]+property=["\']og:video(?::secure_url|:url)?["\'][^>]+content=["\']([^"\']+)["\']',
+            page,
+            re.I,
+        )
+        video_url = html.unescape(og_vid_match.group(1)) if og_vid_match else None
+
+        # Pinterest direct MP4 discovery
+        if platform == "PINTEREST" and not video_url:
+            pin_mp4 = re.findall(r'https://v\d*\.pinimg\.com/videos/[^\s"\'<>\\]+\.mp4', page)
+            if pin_mp4:
+                # Prefer 720p/mc mp4 over thumbnails
+                hd_pins = [p for p in pin_mp4 if "720p" in p or "mc" in p]
+                video_url = (hd_pins[0] if hd_pins else pin_mp4[0]).replace("\\/", "/")
+
+        # Behance direct MP4 / high-res image discovery
+        if platform == "BEHANCE":
+            if not video_url:
+                behance_mp4 = re.findall(r'https?://[^\s"\'<>\\]+?\.mp4[^\s"\'<>\\]*', page)
+                if behance_mp4:
+                    video_url = html.unescape(behance_mp4[0].replace("\\/", "/"))
+            behance_imgs = re.findall(
+                r'https://mir-s3-cdn-cf\.behance\.net/project_modules/(?:fs|max_3840|1400|disp)/[^\s"\'<>\\]+',
+                page,
+            )
+            if behance_imgs:
+                best_img = behance_imgs[0].replace("\\/", "/")
+
+        # Flickr highest-resolution image discovery (bypass copyright overlay)
+        if platform == "FLICKR":
+            flickr_imgs = re.findall(r'(?:https?:)?//live\.staticflickr\.com/\d+/\d+_[\da-fA-F]+_[okhbclz]\.(?:jpg|png)', page)
+            if flickr_imgs:
+                # Priority order: _o (original), _k (2048), _h (1600), _b (1024)
+                def _flickr_rank(u_str: str) -> int:
+                    for idx, tag in enumerate(["_o.", "_k.", "_h.", "_b.", "_c.", "_z."]):
+                        if tag in u_str:
+                            return idx
+                    return 99
+
+                flickr_imgs.sort(key=_flickr_rank)
+                raw_u = flickr_imgs[0].replace("\\/", "/")
+                best_img = f"https:{raw_u}" if raw_u.startswith("//") else raw_u
+
+        # 500px copyright-protected unwatermarked high-res discovery
+        if platform == "500PX":
+            px_id_match = re.search(r"500px\.com/photo/(\d+)", str(resp.url) or url)
+            if px_id_match:
+                px_id = px_id_match.group(1)
+                try:
+                    api_px = cffi_requests.get(
+                        f"https://api.500px.com/v1/photos?ids={px_id}&image_size[]=2048&image_size[]=1600&image_size[]=1080",
+                        impersonate="chrome",
+                        timeout=6,
+                    )
+                    if api_px.status_code == 200:
+                        photos_dict = (api_px.json() or {}).get("photos") or {}
+                        p_obj = photos_dict.get(px_id) or {}
+                        if p_obj.get("name"):
+                            title = p_obj["name"]
+                        imgs_list = p_obj.get("images") or []
+                        if imgs_list:
+                            imgs_list.sort(key=lambda x: x.get("size", 0), reverse=True)
+                            best_img = imgs_list[0].get("https_url") or imgs_list[0].get("url") or best_img
+                except Exception:
+                    pass
+            if not best_img:
+                drscdn = re.findall(r'https://drscdn\.500px\.org/photo/[^\s"\'<>\\]+', page)
+                if drscdn:
+                    best_img = html.unescape(drscdn[0].replace("\\/", "/"))
+
+        if video_url or best_img:
+            return {
+                "title": title,
+                "uploader": f"{platform.title()} Creator",
+                "duration": 0,
+                "thumbnail": best_img,
+                "video_url": video_url if is_safe_media_url(video_url) else None,
+                "image_url": best_img if is_safe_media_url(best_img) else None,
+            }
+    except Exception:
+        pass
+    return None
+
+
+def fetch_from_cobalt_instances(url: str, mode: str, quality: str) -> Optional[str]:
+    """Queries Cobalt v10 instances for fast direct streams (Instagram, TikTok, Reddit, Pinterest, Vimeo, Twitch, X)."""
+    q_val = quality if quality in ["1080", "720", "480", "360"] else "1080"
+    cobalt_hosts = [
+        "https://cobalt-api.kwiatekmiki.com",
+        "https://cobalt-backend.canine.tools",
+        "https://capi.3kh0.net",
+        "https://api.cobalt.blackcat.sweeux.org",
+    ]
+    for host in cobalt_hosts:
+        try:
+            payload = {
+                "url": url,
+                "videoQuality": q_val,
+                "downloadMode": "audio" if mode == "audio" else "auto",
+                "audioFormat": "mp3",
+                "filenameStyle": "basic",
+                "tiktokFullAudio": True,
+            }
+            headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0",
+            }
+            resp = cffi_requests.post(f"{host}/", json=payload, headers=headers, impersonate="chrome", timeout=6)
+            if resp.status_code == 200:
+                data = resp.json()
+                dl_url = data.get("url")
+                if is_safe_media_url(dl_url):
+                    return dl_url
+                picker = data.get("picker") or []
+                if picker and is_safe_media_url(picker[0].get("url")):
+                    return picker[0]["url"]
+        except Exception:
+            continue
+    return None
+
+
+# =====================================================================
+# 2. FAST INFO FETCH
 # =====================================================================
 def fast_fetch_info(url: str) -> dict:
+    if is_blocked_platform(url):
+        raise HTTPException(status_code=400, detail="This platform is not supported.")
+
     platform = detect_platform_name(url)
-    is_yt = platform == "YOUTUBE"
-    vid_id = extract_youtube_id(url) if is_yt else None
-    cache_key = vid_id or url.strip()
+    cache_key = url.strip()
 
     with CACHE_LOCK:
         cached_info = INFO_CACHE.get(cache_key)
         if cached_info and (time.time() - cached_info.get("_ts", 0) < 1800):
             return {k: v for k, v in cached_info.items() if k != "_ts"}
 
-    if is_yt:
-        clean_yt_url = f"https://www.youtube.com/watch?v={vid_id}" if vid_id else url
-        oembed_urls = [
-            f"https://www.youtube.com/oembed?url={quote(clean_yt_url)}&format=json",
-            f"https://noembed.com/embed?url={quote(clean_yt_url)}",
-        ]
-        for endpoint in oembed_urls:
-            try:
-                resp = cffi_requests.get(endpoint, impersonate="chrome", timeout=5)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data.get("title"):
-                        thumb = (
-                            f"https://i.ytimg.com/vi/{vid_id}/maxresdefault.jpg"
-                            if vid_id
-                            else data.get("thumbnail_url", "")
-                        )
-                        fallback_thumb = data.get("thumbnail_url") or (
-                            f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg" if vid_id else ""
-                        )
-                        result = {
-                            "title": data.get("title"),
-                            "uploader": data.get("author_name") or "YouTube Creator",
-                            "duration": 0,
-                            "duration_string": "HD Ready",
-                            "thumbnail": fallback_thumb,
-                            "hd_thumbnail": thumb,
-                            "platform": "YOUTUBE",
-                            "max_quality": "1080P HD",
-                        }
-                        with CACHE_LOCK:
-                            INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
-                        return result
-            except Exception:
-                pass
+    # Fast dedicated APIs first
+    if platform == "TIKTOK":
+        tk = extract_tiktok_no_watermark(url)
+        if tk:
+            result = {
+                "title": tk["title"],
+                "uploader": tk["uploader"],
+                "duration": tk["duration"],
+                "duration_string": format_duration(tk["duration"]),
+                "thumbnail": tk["thumbnail"],
+                "hd_thumbnail": tk["thumbnail"],
+                "platform": platform,
+                "max_quality": "NO WATERMARK HD",
+            }
+            with CACHE_LOCK:
+                INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
+            return result
 
+    if platform == "X / TWITTER":
+        tw = extract_twitter_x_api(url)
+        if tw:
+            result = {
+                "title": tw["title"],
+                "uploader": tw["uploader"],
+                "duration": tw["duration"],
+                "duration_string": format_duration(tw["duration"]),
+                "thumbnail": tw["thumbnail"],
+                "hd_thumbnail": tw.get("image_url") or tw["thumbnail"],
+                "platform": platform,
+                "max_quality": "HD READY",
+            }
+            with CACHE_LOCK:
+                INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
+            return result
+
+    if platform == "ARTSTATION":
+        art = extract_artstation_project(url)
+        if art:
+            result = {
+                "title": art["title"],
+                "uploader": art["uploader"],
+                "duration": 0,
+                "duration_string": "3D / 4K Art",
+                "thumbnail": art["thumbnail"],
+                "hd_thumbnail": art["image_url"] or art["thumbnail"],
+                "platform": platform,
+                "max_quality": "4K READY",
+            }
+            with CACHE_LOCK:
+                INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
+            return result
+
+    if platform in ("BEHANCE", "FLICKR", "500PX", "PINTEREST"):
+        scraped = extract_design_or_photo_page(url, platform)
+        if scraped and (scraped.get("thumbnail") or scraped.get("video_url")):
+            result = {
+                "title": scraped["title"],
+                "uploader": scraped["uploader"],
+                "duration": 0,
+                "duration_string": "High-Res Ready",
+                "thumbnail": scraped.get("thumbnail") or "",
+                "hd_thumbnail": scraped.get("image_url") or scraped.get("thumbnail") or "",
+                "platform": platform,
+                "max_quality": "HIGH-RES",
+            }
+            with CACHE_LOCK:
+                INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
+            return result
+
+    # Universal yt-dlp metadata fetch (Instagram, Facebook, Reddit, Vimeo, Twitch, SoundCloud, Threads, etc.)
     cmd = [
         "yt-dlp",
         "--dump-json",
@@ -267,10 +567,15 @@ def fast_fetch_info(url: str) -> dict:
         "--geo-bypass",
         "--impersonate",
         "chrome",
-        url,
     ]
+    if platform == "VIMEO":
+        cmd += ["--referer", "https://vimeo.com/"]
+    if COOKIES_FILE.exists():
+        cmd += ["--cookies", str(COOKIES_FILE)]
+    cmd.append(url)
+
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=12)
         if proc.returncode == 0 and proc.stdout.strip():
             info = json.loads(proc.stdout.splitlines()[0])
             duration = info.get("duration") or 0
@@ -291,225 +596,120 @@ def fast_fetch_info(url: str) -> dict:
     except Exception:
         pass
 
-    fallback_thumb = f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg" if vid_id else ""
+    # Fallback OpenGraph scrape
+    scraped = extract_design_or_photo_page(url, platform)
+    if scraped:
+        return {
+            "title": scraped["title"],
+            "uploader": scraped["uploader"],
+            "duration": 0,
+            "duration_string": "HD Ready",
+            "thumbnail": scraped.get("thumbnail") or "",
+            "hd_thumbnail": scraped.get("image_url") or scraped.get("thumbnail") or "",
+            "platform": platform,
+            "max_quality": "HD READY",
+        }
+
     return {
         "title": f"{platform.title()} Media",
         "uploader": f"{platform.title()} Creator",
         "duration": 0,
         "duration_string": "HD Ready",
-        "thumbnail": fallback_thumb,
-        "hd_thumbnail": fallback_thumb,
+        "thumbnail": "",
+        "hd_thumbnail": "",
         "platform": platform,
         "max_quality": "HD READY",
     }
 
 
 # =====================================================================
-# 2. ALTERNATIVE YOUTUBE MIRROR GATEWAY (Argon / Cobalt + Piped + Invidious)
+# 3. UNIVERSAL MULTI-ENGINE DOWNLOADER
 # =====================================================================
-def fetch_from_alternative_mirrors(url: str, mode: str, quality: str) -> Optional[str]:
-    vid_id = extract_youtube_id(url)
-    clean_url = f"https://www.youtube.com/watch?v={vid_id}" if vid_id else url
-    q_val = quality if quality in ["1080", "720", "480", "360"] else "720"
-
-    # A. Argon / Cobalt v10 Mirror Instances (Clean Direct Tunnel Streams)
-    cobalt_v10_hosts = [
-        "https://cobalt-api.kwiatekmiki.com",
-        "https://cobalt-backend.canine.tools",
-        "https://capi.3kh0.net",
-        "https://api.cobalt.blackcat.sweeux.org",
-    ]
-    for host in cobalt_v10_hosts:
-        try:
-            payload = {
-                "url": clean_url,
-                "videoQuality": q_val,
-                "downloadMode": "audio" if mode == "audio" else "auto",
-                "audioFormat": "mp3",
-                "filenameStyle": "basic",
-            }
-            headers = {
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0",
-            }
-            resp = cffi_requests.post(
-                f"{host}/", json=payload, headers=headers, impersonate="chrome", timeout=6
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                dl_url = data.get("url")
-                if is_safe_media_url(dl_url):
-                    return dl_url
-        except Exception:
-            continue
-
-    if not vid_id:
-        return None
-
-    # B. Public Piped API Mirrors (Fixed Bracket Syntax!)
-    piped_hosts = [
-        "https://pipedapi.kavin.rocks",
-        "https://api.piped.private.coffee",
-        "https://pipedapi.adminforge.de",
-        "https://pipedapi.drgns.space",
-    ]
-    for host in piped_hosts:
-        try:
-            resp = cffi_requests.get(f"{host}/streams/{vid_id}", impersonate="chrome", timeout=6)
-            if resp.status_code != 200:
-                continue
-            data = resp.json()
-            if mode == "audio":
-                audios = data.get("audioStreams") or []
-                if audios:
-                    audios.sort(key=lambda x: x.get("bitrate", 0), reverse=True)
-                    dl_url = audios[0].get("url")
-                    if is_safe_media_url(dl_url):
-                        return dl_url
-            else:
-                vids = data.get("videoStreams") or []
-                progs = [s for s in vids if not s.get("videoOnly", True) and s.get("url")]
-                matched = [s for s in progs if s.get("quality") == f"{q_val}p"]
-                if matched and is_safe_media_url(matched[0].get("url")):
-                    return matched[0]["url"]
-                if progs and is_safe_media_url(progs[0].get("url")):
-                    return progs[0]["url"]
-        except Exception:
-            continue
-
-    # C. Public Invidious API Mirrors (with &local=true proxy stream)
-    invidious_hosts = [
-        "https://inv.tux.pizza",
-        "https://invidious.nerdvpn.de",
-        "https://inv.nadeko.net",
-        "https://yewtu.be",
-    ]
-    for host in invidious_hosts:
-        try:
-            resp = cffi_requests.get(
-                f"{host}/api/v1/videos/{vid_id}", impersonate="chrome", timeout=6
-            )
-            if resp.status_code != 200:
-                continue
-            data = resp.json()
-            if mode == "audio":
-                adaptive = data.get("adaptiveFormats") or []
-                audios = [
-                    f for f in adaptive if str(f.get("type", "")).startswith("audio/") and f.get("url")
-                ]
-                if audios and is_safe_media_url(audios[0].get("url")):
-                    return audios[0]["url"]
-            else:
-                fmt_streams = data.get("formatStreams") or []
-                for s in fmt_streams:
-                    if s.get("qualityLabel") == f"{q_val}p" and is_safe_media_url(s.get("url")):
-                        return s["url"]
-                if fmt_streams and is_safe_media_url(fmt_streams[0].get("url")):
-                    return fmt_streams[0]["url"]
-        except Exception:
-            continue
-
-    return None
-
-
-# =====================================================================
-# 3. LOCAL SECURE FALLBACK (pytubefix + yt-dlp for YouTube & Other Apps)
-# =====================================================================
-def download_local_secure_fallback(
-    url: str,
+def download_direct_url_to_file(
+    direct_url: str,
     job_dir: Path,
     mode: str,
     format_type: str,
     quality: str,
     is_muted: bool,
-) -> Path:
-    is_yt = detect_platform_name(url) == "YOUTUBE"
+    referer: Optional[str] = None,
+) -> Optional[Path]:
+    """Downloads a direct MP4/Audio/Image URL and processes audio/mute if requested."""
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0"}
+        if referer:
+            headers["Referer"] = referer
+        resp = cffi_requests.get(direct_url, headers=headers, impersonate="chrome", allow_redirects=True, timeout=45)
+        if resp.status_code != 200 or not resp.content:
+            return None
 
-    # Try pytubefix multi-client first for YouTube
-    if is_yt:
-        try:
-            from pytubefix import YouTube
+        ctype = (resp.headers.get("content-type") or "").lower()
+        is_image = "image/" in ctype or any(
+            direct_url.lower().split("?")[0].endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp")
+        )
 
-            for client in ["ANDROID_VR", "IOS", "WEB_CREATOR", "MWEB", "WEB_EMBED", "TV"]:
-                try:
-                    yt = YouTube(url, client=client)
-                    out_file = job_dir / f"output.{format_type}"
-                    if mode == "audio":
-                        stream = (
-                            yt.streams.get_audio_only()
-                            or yt.streams.filter(only_audio=True).first()
-                        )
-                        if stream:
-                            raw_a = Path(
-                                stream.download(output_path=str(job_dir), filename=f"raw_aud_{client}")
-                            )
-                            cmd = ["ffmpeg", "-y", "-i", str(raw_a), "-vn"]
-                            if format_type == "mp3":
-                                cmd += ["-c:a", "libmp3lame", "-b:a", f"{quality}k"]
-                            cmd.append(str(out_file))
-                            subprocess.run(cmd, check=True, timeout=60)
-                            if out_file.exists() and out_file.stat().st_size > 0:
-                                return out_file
-                    else:
-                        stream = (
-                            yt.streams.filter(
-                                res=f"{quality}p", progressive=True, file_extension="mp4"
-                            ).first()
-                            or yt.streams.filter(progressive=True, file_extension="mp4")
-                            .order_by("resolution")
-                            .desc()
-                            .first()
-                            or yt.streams.get_highest_resolution()
-                        )
-                        if stream:
-                            raw_v = Path(
-                                stream.download(
-                                    output_path=str(job_dir), filename=f"raw_vid_{client}.mp4"
-                                )
-                            )
-                            if is_muted:
-                                subprocess.run(
-                                    [
-                                        "ffmpeg",
-                                        "-y",
-                                        "-i",
-                                        str(raw_v),
-                                        "-an",
-                                        "-c:v",
-                                        "copy",
-                                        str(out_file),
-                                    ],
-                                    check=True,
-                                    timeout=45,
-                                )
-                            else:
-                                shutil.copy(raw_v, out_file)
-                            if out_file.exists() and out_file.stat().st_size > 0:
-                                return out_file
-                except Exception:
-                    continue
-        except Exception:
-            pass
+        if is_image and mode == "video":
+            ext = "png" if "png" in ctype else "jpg"
+            img_path = job_dir / f"artwork.{ext}"
+            img_path.write_bytes(resp.content)
+            return img_path
 
-    # Universal yt-dlp for Instagram, Pinterest, X/Twitter, Reddit, FB, TikTok & YouTube fallback
-    raw_template = str(job_dir / "raw_media.%(ext)s")
+        raw_path = job_dir / f"raw_direct.{format_type}"
+        raw_path.write_bytes(resp.content)
+
+        if mode == "audio":
+            out_audio = job_dir / f"output.{format_type}"
+            cmd = ["ffmpeg", "-y", "-i", str(raw_path), "-vn"]
+            if format_type == "mp3":
+                cmd += ["-c:a", "libmp3lame", "-b:a", f"{quality}k" if str(quality).isdigit() else "320k"]
+            elif format_type == "m4a":
+                cmd += ["-c:a", "aac", "-b:a", "192k"]
+            elif format_type == "wav":
+                cmd += ["-c:a", "pcm_s16le"]
+            cmd.append(str(out_audio))
+            subprocess.run(cmd, check=True, capture_output=True, timeout=60)
+            return out_audio
+
+        if is_muted:
+            muted_out = job_dir / f"muted.{format_type}"
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", str(raw_path), "-an", "-c:v", "copy", str(muted_out)],
+                check=True,
+                capture_output=True,
+                timeout=60,
+            )
+            return muted_out
+
+        return raw_path
+    except Exception:
+        return None
+
+
+def download_with_ytdlp(
+    target_url: str,
+    job_dir: Path,
+    mode: str,
+    format_type: str,
+    quality: str,
+    is_muted: bool,
+    referer: Optional[str] = None,
+) -> Optional[Path]:
+    raw_template = str(job_dir / "ytdlp_media.%(ext)s")
     base_cmd = [
         "yt-dlp",
         "--no-playlist",
         "--no-warnings",
         "--no-check-certificates",
         "--geo-bypass",
+        "--concurrent-fragments",
+        "8",
         "--impersonate",
         "chrome",
         "-o",
         raw_template,
     ]
-    if is_yt:
-        base_cmd += [
-            "--extractor-args",
-            "youtube:player_client=android_vr,ios,web_embedded;formats=missing_pot",
-        ]
+    if referer:
+        base_cmd += ["--referer", referer, "--add-header", f"Origin:{referer.rstrip('/')}"]
     if COOKIES_FILE.exists():
         base_cmd += ["--cookies", str(COOKIES_FILE)]
 
@@ -522,37 +722,196 @@ def download_local_secure_fallback(
             format_type,
             "--audio-quality",
             f"{quality}K" if str(quality).isdigit() else "0",
-            url,
+            target_url,
         ]
     else:
         q_filter = f"[height<={quality}]" if str(quality).isdigit() else ""
+        # Always merge bestvideo+bestaudio so Reddit, Facebook, Vimeo, Twitch have full audio!
         fmt = (
             f"bestvideo{q_filter}/best{q_filter}/best"
             if is_muted
-            else f"bestvideo{q_filter}+bestaudio/best{q_filter}/best"
+            else f"bestvideo{q_filter}+bestaudio/best{q_filter}/bestvideo+bestaudio/best"
         )
-        cmd = base_cmd + ["-f", fmt, "--merge-output-format", format_type, url]
+        cmd = base_cmd + ["-f", fmt, "--merge-output-format", format_type, target_url]
 
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+    subprocess.run(cmd, capture_output=True, text=True, timeout=110)
     files = [
         f
-        for f in job_dir.glob("raw_media.*")
-        if not f.name.endswith(".part") and not f.name.endswith(".ytdl")
+        for f in job_dir.glob("ytdlp_media.*")
+        if f.is_file() and not f.name.endswith(".part") and not f.name.endswith(".ytdl") and f.stat().st_size > 0
     ]
-    if files and files[0].stat().st_size > 0:
+    if files:
         downloaded_raw = files[0]
         if is_muted and mode == "video":
             muted_out = job_dir / f"muted_output.{downloaded_raw.suffix.lstrip('.') or format_type}"
             subprocess.run(
                 ["ffmpeg", "-y", "-i", str(downloaded_raw), "-an", "-c:v", "copy", str(muted_out)],
                 check=True,
+                capture_output=True,
                 timeout=60,
             )
             return muted_out
         return downloaded_raw
+    return None
 
-    err_lines = [line for line in (proc.stderr or "").splitlines() if line.strip()]
-    raise RuntimeError(err_lines[-1] if err_lines else "Media stream extraction failed.")
+
+def download_with_gallery_dl(url: str, job_dir: Path) -> Optional[Path]:
+    """Fallback using gallery-dl for Instagram stories/posts, Pinterest boards, ArtStation, Behance, Flickr, 500px, Reddit, X."""
+    gdl_dir = job_dir / "gdl"
+    gdl_dir.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "gallery-dl",
+        "--no-mtime",
+        "--range",
+        "1",
+        "-D",
+        str(gdl_dir),
+    ]
+    if COOKIES_FILE.exists():
+        cmd += ["--cookies", str(COOKIES_FILE)]
+    cmd.append(url)
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        files = [f for f in gdl_dir.rglob("*") if f.is_file() and f.stat().st_size > 0]
+        if files:
+            # Prefer video files (.mp4, .webm, .mov) if present, otherwise return highest-size image
+            vids = [f for f in files if f.suffix.lower() in (".mp4", ".webm", ".mov", ".gif")]
+            if vids:
+                return vids[0]
+            files.sort(key=lambda x: x.stat().st_size, reverse=True)
+            return files[0]
+    except Exception:
+        pass
+    return None
+
+
+def download_universal_media(
+    url: str,
+    job_dir: Path,
+    mode: str,
+    format_type: str,
+    quality: str,
+    is_muted: bool,
+) -> Path:
+    platform = detect_platform_name(url)
+
+    # 1. TikTok No-Watermark Fast Engine
+    if platform == "TIKTOK":
+        tk = extract_tiktok_no_watermark(url)
+        if tk:
+            target_dl = tk["audio_url"] if mode == "audio" else tk["video_url"]
+            res = download_direct_url_to_file(target_dl, job_dir, mode, format_type, quality, is_muted)
+            if res:
+                return res
+
+    # 2. X (Twitter) Video & GIF Engine (converts GIFs/MP4s cleanly)
+    if platform == "X / TWITTER":
+        tw = extract_twitter_x_api(url)
+        if tw and (tw.get("video_url") or tw.get("image_url")):
+            target_dl = tw.get("video_url") or tw.get("image_url")
+            res = download_direct_url_to_file(target_dl, job_dir, mode, format_type, quality, is_muted)
+            if res:
+                return res
+
+    # 3. ArtStation 3D Shorts & 4K Artworks Engine
+    if platform == "ARTSTATION":
+        art = extract_artstation_project(url)
+        if art:
+            if art.get("video_url"):
+                res = download_direct_url_to_file(
+                    art["video_url"],
+                    job_dir,
+                    mode,
+                    format_type,
+                    quality,
+                    is_muted,
+                    referer="https://www.artstation.com/",
+                )
+                if res:
+                    return res
+            if art.get("embed_url"):
+                res = download_with_ytdlp(
+                    art["embed_url"],
+                    job_dir,
+                    mode,
+                    format_type,
+                    quality,
+                    is_muted,
+                    referer="https://www.artstation.com/",
+                )
+                if res:
+                    return res
+            if art.get("image_url"):
+                res = download_direct_url_to_file(
+                    art["image_url"],
+                    job_dir,
+                    mode,
+                    format_type,
+                    quality,
+                    is_muted,
+                    referer="https://www.artstation.com/",
+                )
+                if res:
+                    return res
+
+    # 4. Vimeo Creator-Restricted & Embedded Videos Engine
+    if platform == "VIMEO":
+        res = download_with_ytdlp(
+            url, job_dir, mode, format_type, quality, is_muted, referer="https://vimeo.com/"
+        )
+        if res:
+            return res
+        # Try player.vimeo.com bypass for creator-restricted embeds
+        vm_match = re.search(r"vimeo\.com/(?:channels/[^/]+/|groups/[^/]+/videos/|video/)?(\d+)", url)
+        if vm_match:
+            player_url = f"https://player.vimeo.com/video/{vm_match.group(1)}"
+            res = download_with_ytdlp(
+                player_url,
+                job_dir,
+                mode,
+                format_type,
+                quality,
+                is_muted,
+                referer="https://player.vimeo.com/",
+            )
+            if res:
+                return res
+
+    # 5. Primary yt-dlp Engine (Instagram, Facebook, Reddit with Audio, Pinterest, Twitch VODs/Clips, Behance, SoundCloud, Threads)
+    res = download_with_ytdlp(url, job_dir, mode, format_type, quality, is_muted)
+    if res:
+        return res
+
+    # 6. Cobalt Mirror Tunnel Fallback (Great for Instagram Reels/Stories, Reddit, Pinterest, TikTok, Vimeo, Twitch)
+    cobalt_stream = fetch_from_cobalt_instances(url, mode, quality)
+    if cobalt_stream:
+        res = download_direct_url_to_file(cobalt_stream, job_dir, mode, format_type, quality, is_muted)
+        if res:
+            return res
+
+    # 7. Design & Photography Direct Scraper (Behance, Flickr, 500px, Pinterest, Instagram)
+    scraped = extract_design_or_photo_page(url, platform)
+    if scraped:
+        target_dl = scraped.get("video_url") or scraped.get("image_url")
+        if target_dl:
+            res = download_direct_url_to_file(
+                target_dl,
+                job_dir,
+                mode,
+                format_type,
+                quality,
+                is_muted,
+                referer=f"https://{urlparse(url).netloc}/",
+            )
+            if res:
+                return res
+
+    # 8. gallery-dl Universal Fallback (Pinterest Boards, Flickr, 500px, ArtStation, Behance, Instagram)
+    gdl_file = download_with_gallery_dl(url, job_dir)
+    if gdl_file:
+        return gdl_file
+
+    raise RuntimeError(f"Could not extract media from {platform.title()}. Please verify the link is public.")
 
 
 # =====================================================================
@@ -623,73 +982,17 @@ def process_download_job(
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     platform = detect_platform_name(url)
-    is_yt = platform == "YOUTUBE"
     has_trim = start_sec is not None and end_sec is not None and end_sec > start_sec
-    final_filename = f"{safe_header_title}.{format_type}"
 
     try:
-        update_job(job_id, progress=40)
-
-        # 1. YOUTUBE: Try Alternative Mirror Gateways First (Argon/Cobalt + Piped + Invidious)
-        if is_yt:
-            direct_stream_url = fetch_from_alternative_mirrors(url, mode, quality)
-            if direct_stream_url:
-                if not has_trim and not is_muted:
-                    cleanup_dir(job_dir)
-                    update_job(
-                        job_id,
-                        status="ready",
-                        progress=100,
-                        download_url=direct_stream_url,
-                        filename=final_filename,
-                    )
-                    return
-
-                update_job(job_id, progress=85)
-                out_path = job_dir / f"trimmed.{format_type}"
-                if has_trim:
-                    cut_media_segment_exact(
-                        direct_stream_url,
-                        out_path,
-                        start_sec,
-                        end_sec,
-                        mode,
-                        format_type,
-                        quality,
-                        is_muted,
-                    )
-                else:
-                    subprocess.run(
-                        [
-                            "ffmpeg",
-                            "-y",
-                            "-i",
-                            direct_stream_url,
-                            "-an",
-                            "-c:v",
-                            "copy",
-                            str(out_path),
-                        ],
-                        check=True,
-                        timeout=60,
-                    )
-
-                update_job(
-                    job_id,
-                    status="ready",
-                    progress=100,
-                    download_url=f"/api/stream/{job_id}?filename={quote(final_filename)}",
-                    filename=final_filename,
-                )
-                return
-
-        # 2. LOCAL SECURE ENGINE (For Instagram/Pinterest/Reddit/X OR YouTube Fallback)
-        update_job(job_id, progress=65)
-        downloaded_file = download_local_secure_fallback(
+        update_job(job_id, progress=55)
+        downloaded_file = download_universal_media(
             url, job_dir, mode, format_type, quality, is_muted and not has_trim
         )
 
-        if has_trim:
+        is_static_image = downloaded_file.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")
+
+        if has_trim and not is_static_image:
             update_job(job_id, progress=88)
             trimmed_out = job_dir / f"trimmed.{format_type}"
             downloaded_file = cut_media_segment_exact(
@@ -726,9 +1029,9 @@ DEFAULT_FEEDBACK = [
         "id": "seed-1",
         "name": "Aarav Edits",
         "type": "review",
-        "platform": "YOUTUBE",
+        "platform": "INSTAGRAM",
         "rating": 5,
-        "message": "720p video and clip trimmer work super smoothly for my shorts editing!",
+        "message": "Instagram Reels, TikTok no-watermark aur ArtStation 3D shorts super fast download ho rahe hain!",
         "status": "Verified User",
         "time": "Today",
     },
@@ -793,12 +1096,15 @@ def api_info(
 def download_hd_thumbnail(
     background_tasks: BackgroundTasks,
     url: str = Query(...),
-    title: str = Query("GlobiFree_Thumbnail"),
+    title: str = Query("GlobiFree_Artwork"),
 ):
+    if is_blocked_platform(url):
+        raise HTTPException(status_code=400, detail="This platform is not supported.")
+
     info = fast_fetch_info(url)
     thumb_url = info.get("hd_thumbnail") or info.get("thumbnail")
     if not thumb_url:
-        raise HTTPException(status_code=404, detail="Thumbnail not found.")
+        raise HTTPException(status_code=404, detail="High-res image or thumbnail not found.")
 
     safe_title = ascii_safe_filename(title)
     thumb_dir = TEMP_DIR / f"thumb_{uuid.uuid4()}"
@@ -806,14 +1112,15 @@ def download_hd_thumbnail(
     thumb_path = thumb_dir / f"{safe_title}.jpg"
 
     try:
-        resp = cffi_requests.get(thumb_url, impersonate="chrome", timeout=8)
+        headers = {"Referer": f"https://{urlparse(url).netloc}/"}
+        resp = cffi_requests.get(thumb_url, headers=headers, impersonate="chrome", timeout=12)
         if resp.status_code != 200 and info.get("thumbnail"):
-            resp = cffi_requests.get(info["thumbnail"], impersonate="chrome", timeout=8)
+            resp = cffi_requests.get(info["thumbnail"], headers=headers, impersonate="chrome", timeout=12)
         thumb_path.write_bytes(resp.content)
         background_tasks.add_task(cleanup_dir, thumb_dir)
         return FileResponse(
             path=str(thumb_path),
-            filename=f"{safe_title}_HD_Thumbnail.jpg",
+            filename=f"{safe_title}_HD.jpg",
             media_type="image/jpeg",
         )
     except Exception as e:
@@ -826,7 +1133,7 @@ def api_prewarm(
     url: str = Form(...),
     mode: str = Form("video"),
     format_type: str = Form("mp4"),
-    quality: str = Form("720"),
+    quality: str = Form("1080"),
 ):
     return {"status": "ready"}
 
@@ -836,12 +1143,15 @@ def api_prepare(
     url: str = Form(...),
     mode: str = Form("video"),
     format_type: str = Form("mp4"),
-    quality: str = Form("720"),
+    quality: str = Form("1080"),
     mute_video: str = Form("false"),
     custom_title: Optional[str] = Form(None),
     start_time: Optional[str] = Form(None),
     end_time: Optional[str] = Form(None),
 ):
+    if is_blocked_platform(url):
+        raise HTTPException(status_code=400, detail="This platform is not supported.")
+
     cleanup_old_temp_files()
     is_muted = mute_video.lower() == "true"
     start_sec = time_str_to_seconds(start_time)
@@ -929,11 +1239,16 @@ def stream_prepared_file(
     job_dir = TEMP_DIR / job_id
     if not job_dir.exists():
         raise HTTPException(status_code=404, detail="File expired.")
-    files = [f for f in job_dir.glob("*") if f.is_file() and not f.name.endswith(".part")]
+    files = [
+        f
+        for f in job_dir.rglob("*")
+        if f.is_file() and not f.name.endswith(".part") and not f.name.endswith(".ytdl")
+    ]
     if not files:
         cleanup_dir(job_dir)
         raise HTTPException(status_code=404, detail="File not found.")
-    target_file = files[0]
+    # Pick the final processed file (trimmed/muted/artwork/ytdlp_media)
+    target_file = sorted(files, key=lambda x: x.stat().st_mtime, reverse=True)[0]
     safe_name = ascii_safe_filename(Path(filename).stem) + target_file.suffix
     background_tasks.add_task(cleanup_dir, job_dir)
     return FileResponse(path=str(target_file), filename=safe_name, media_type="application/octet-stream")
@@ -948,7 +1263,7 @@ def get_feedback():
 def post_feedback(
     name: str = Form("Anonymous User"),
     feedback_type: str = Form("review"),
-    platform: str = Form("YOUTUBE"),
+    platform: str = Form("INSTAGRAM"),
     rating: int = Form(5),
     media_url: Optional[str] = Form(None),
     message: str = Form(...),
