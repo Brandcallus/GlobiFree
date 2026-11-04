@@ -39,7 +39,11 @@ CACHE_LOCK = threading.Lock()
 JOBS_LOCK = threading.Lock()
 FEEDBACK_LOCK = threading.Lock()
 
-# Block any shady redirect/adware domains
+CHROME_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
 BLOCKED_AD_DOMAINS = (
     "linkbrisora",
     "pathzenora",
@@ -171,6 +175,8 @@ def detect_platform_name(url: str) -> str:
     u = url.lower()
     if "instagram.com" in u or "instagr.am" in u:
         return "INSTAGRAM"
+    if "snapchat.com" in u or "snap.com" in u:
+        return "SNAPCHAT"
     if "facebook.com" in u or "fb.watch" in u or "fb.com" in u:
         return "FACEBOOK"
     if "twitter.com" in u or "x.com" in u or "t.co" in u:
@@ -210,8 +216,180 @@ def update_job(job_id: Optional[str], **kwargs):
 
 
 # =====================================================================
-# 1. PLATFORM-SPECIFIC API EXTRACTORS (TikTok, X, ArtStation, Behance, Flickr, 500px, Pinterest)
+# 1. DEDICATED PLATFORM EXTRACTORS (Instagram, Snapchat, TikTok, X, ArtStation, etc.)
 # =====================================================================
+def extract_instagram_media(url: str) -> Optional[Dict[str, Any]]:
+    """Multi-layer Instagram Reels/Posts/Stories extractor that works on cloud servers."""
+    m = re.search(r"instagram\.com/(?:[^/]+/)?(?:reel|reels|p|tv)/([A-Za-z0-9_-]+)", url)
+    shortcode = m.group(1) if m else None
+
+    # Layer A: Try vxinstagram / ddinstagram JSON API
+    if shortcode:
+        for api_host in ("https://api.vxinstagram.com", "https://d.ddinstagram.com"):
+            try:
+                resp = cffi_requests.get(f"{api_host}/p/{shortcode}", impersonate="chrome", timeout=6)
+                if resp.status_code == 200 and "application/json" in (resp.headers.get("content-type") or ""):
+                    data = resp.json()
+                    media_list = data.get("media_extended") or data.get("mediaURLs") or []
+                    video_url = None
+                    thumb_url = ""
+                    if media_list and isinstance(media_list[0], dict):
+                        video_url = media_list[0].get("url")
+                        thumb_url = media_list[0].get("thumbnail_url") or video_url
+                    elif media_list and isinstance(media_list[0], str):
+                        video_url = media_list[0]
+                    if is_safe_media_url(video_url):
+                        return {
+                            "title": (data.get("text") or f"Instagram_{shortcode}")[:80],
+                            "uploader": data.get("user_name") or "Instagram Creator",
+                            "duration": 0,
+                            "thumbnail": thumb_url,
+                            "video_url": video_url,
+                            "image_url": thumb_url or video_url,
+                        }
+            except Exception:
+                pass
+
+    # Layer B: Public Instagram Embed Captioned endpoint (rarely blocked on cloud IPs)
+    if shortcode:
+        try:
+            embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
+            resp = cffi_requests.get(
+                embed_url,
+                headers={"User-Agent": CHROME_UA, "Accept-Language": "en-US,en;q=0.9"},
+                impersonate="chrome",
+                timeout=8,
+            )
+            if resp.status_code == 200:
+                page = resp.text
+                # Look for escaped video_url inside contextJSON or script tags
+                vid_matches = re.findall(r'\\?"video_url\\?"\s*:\s*\\?"(https?:[^"\\]+(?:\\.[^"\\]*)*)\\?"', page)
+                disp_matches = re.findall(r'\\?"display_url\\?"\s*:\s*\\?"(https?:[^"\\]+(?:\\.[^"\\]*)*)\\?"', page)
+                video_url = None
+                if vid_matches:
+                    raw_v = vid_matches[0].encode("utf-8").decode("unicode_escape").replace("\\/", "/")
+                    video_url = html.unescape(raw_v)
+                thumb_url = ""
+                if disp_matches:
+                    raw_t = disp_matches[-1].encode("utf-8").decode("unicode_escape").replace("\\/", "/")
+                    thumb_url = html.unescape(raw_t)
+                if not thumb_url:
+                    img_m = re.search(r'class="EmbeddedMediaImage"[^>]+src="([^"]+)"', page)
+                    if img_m:
+                        thumb_url = html.unescape(img_m.group(1))
+                user_m = re.search(r'class="UsernameText"[^>]*>([^<]+)<', page)
+                uploader = user_m.group(1).strip() if user_m else "Instagram Creator"
+                if video_url or thumb_url:
+                    return {
+                        "title": f"Instagram_{shortcode}",
+                        "uploader": uploader,
+                        "duration": 0,
+                        "thumbnail": thumb_url,
+                        "video_url": video_url if is_safe_media_url(video_url) else None,
+                        "image_url": thumb_url if is_safe_media_url(thumb_url) else None,
+                    }
+        except Exception:
+            pass
+
+    return None
+
+
+def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
+    """Extracts Snapchat /t/ shortlinks, Spotlight videos, and Public Stories."""
+    try:
+        resp = cffi_requests.get(
+            url,
+            headers={"User-Agent": CHROME_UA, "Accept-Language": "en-US,en;q=0.9"},
+            impersonate="chrome",
+            allow_redirects=True,
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return None
+        page = resp.text
+        resolved_url = str(resp.url) or url
+
+        title = "Snapchat Video"
+        uploader = "Snapchat Creator"
+        thumb_url = ""
+        video_url = None
+        duration = 0
+
+        # 1. Parse __NEXT_DATA__ JSON (used by Snapchat Spotlight, Stories & /t/ redirects)
+        next_m = re.search(
+            r'<script id="__NEXT_DATA__" type="application/json"[^>]*>(.*?)</script>',
+            page,
+            re.S,
+        )
+        if next_m:
+            try:
+                next_json = json.loads(next_m.group(1))
+                page_props = (next_json.get("props") or {}).get("pageProps") or {}
+
+                # Check videoMetadata
+                vid_meta = page_props.get("videoMetadata") or {}
+                if vid_meta:
+                    title = vid_meta.get("name") or vid_meta.get("description") or title
+                    video_url = vid_meta.get("contentUrl") or video_url
+                    thumb_url = vid_meta.get("thumbnailUrl") or thumb_url
+                    uploader = (vid_meta.get("creator") or {}).get("name") or uploader
+
+                # Deep search for mediaUrl / snapMediaUrl / contentUrl in pageProps
+                raw_props_str = json.dumps(page_props)
+                if not video_url:
+                    sc_vids = re.findall(
+                        r'"(?:contentUrl|mediaUrl|videoUrl|snapMediaUrl)"\s*:\s*"(https://[^"]+?)"',
+                        raw_props_str,
+                    )
+                    for cand in sc_vids:
+                        if ".mp4" in cand or "sc-cdn.net" in cand or "bolt" in cand:
+                            video_url = cand
+                            break
+                    if not video_url and sc_vids:
+                        video_url = sc_vids[0]
+
+                if not thumb_url:
+                    sc_thumbs = re.findall(
+                        r'"(?:thumbnailUrl|previewImageUrl|snapPreviewUrl)"\s*:\s*"(https://[^"]+?)"',
+                        raw_props_str,
+                    )
+                    if sc_thumbs:
+                        thumb_url = sc_thumbs[0]
+            except Exception:
+                pass
+
+        # 2. Check preload video link or og:video / og:image tags
+        if not video_url:
+            preload_v = re.search(r'<link[^>]+rel=["\']preload["\'][^>]+as=["\']video["\'][^>]+href=["\']([^"\']+)["\']', page, re.I)
+            if preload_v:
+                video_url = html.unescape(preload_v.group(1))
+        if not video_url:
+            og_v = re.search(r'<meta[^>]+property=["\']og:video(?::secure_url|:url)?["\'][^>]+content=["\']([^"\']+)["\']', page, re.I)
+            if og_v:
+                video_url = html.unescape(og_v.group(1))
+        if not thumb_url:
+            og_i = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', page, re.I)
+            if og_i:
+                thumb_url = html.unescape(og_i.group(1))
+        og_t = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']', page, re.I)
+        if og_t and title == "Snapchat Video":
+            title = html.unescape(og_t.group(1)).strip()
+
+        if video_url or thumb_url:
+            return {
+                "title": title[:90],
+                "uploader": uploader,
+                "duration": duration,
+                "thumbnail": thumb_url,
+                "video_url": video_url if is_safe_media_url(video_url) else None,
+                "image_url": thumb_url if is_safe_media_url(thumb_url) else None,
+                "resolved_url": resolved_url,
+            }
+    except Exception:
+        pass
+    return None
+
+
 def extract_tiktok_no_watermark(url: str) -> Optional[Dict[str, Any]]:
     """Fetches TikTok HD No-Watermark video & metadata via TikWM API."""
     try:
@@ -305,7 +483,6 @@ def extract_artstation_project(url: str) -> Optional[Dict[str, Any]]:
                 iframe_match = re.search(r'src=["\'](https?://[^"\']+)["\']', player_html)
                 if iframe_match and not embed_url:
                     embed_url = iframe_match.group(1)
-                    # Check if the ArtStation video clip page itself has a direct MP4
                     if "artstation.com/embed/" in embed_url:
                         try:
                             emb_resp = cffi_requests.get(embed_url, impersonate="chrome", timeout=6)
@@ -331,13 +508,13 @@ def extract_artstation_project(url: str) -> Optional[Dict[str, Any]]:
 
 
 def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, Any]]:
-    """Extracts high-res videos/photos from Behance, Flickr, 500px, Pinterest, or Instagram."""
+    """Extracts high-res videos/photos from Behance, Flickr, 500px, Pinterest, or OpenGraph pages."""
     try:
         headers = {
+            "User-Agent": CHROME_UA,
             "Referer": f"https://{urlparse(url).netloc}/",
             "Accept-Language": "en-US,en;q=0.9",
         }
-        # Follow shortlinks like pin.it or flic.kr
         resp = cffi_requests.get(url, headers=headers, impersonate="chrome", allow_redirects=True, timeout=10)
         if resp.status_code != 200:
             return None
@@ -358,15 +535,12 @@ def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, 
         )
         video_url = html.unescape(og_vid_match.group(1)) if og_vid_match else None
 
-        # Pinterest direct MP4 discovery
         if platform == "PINTEREST" and not video_url:
             pin_mp4 = re.findall(r'https://v\d*\.pinimg\.com/videos/[^\s"\'<>\\]+\.mp4', page)
             if pin_mp4:
-                # Prefer 720p/mc mp4 over thumbnails
                 hd_pins = [p for p in pin_mp4 if "720p" in p or "mc" in p]
                 video_url = (hd_pins[0] if hd_pins else pin_mp4[0]).replace("\\/", "/")
 
-        # Behance direct MP4 / high-res image discovery
         if platform == "BEHANCE":
             if not video_url:
                 behance_mp4 = re.findall(r'https?://[^\s"\'<>\\]+?\.mp4[^\s"\'<>\\]*', page)
@@ -379,11 +553,9 @@ def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, 
             if behance_imgs:
                 best_img = behance_imgs[0].replace("\\/", "/")
 
-        # Flickr highest-resolution image discovery (bypass copyright overlay)
         if platform == "FLICKR":
             flickr_imgs = re.findall(r'(?:https?:)?//live\.staticflickr\.com/\d+/\d+_[\da-fA-F]+_[okhbclz]\.(?:jpg|png)', page)
             if flickr_imgs:
-                # Priority order: _o (original), _k (2048), _h (1600), _b (1024)
                 def _flickr_rank(u_str: str) -> int:
                     for idx, tag in enumerate(["_o.", "_k.", "_h.", "_b.", "_c.", "_z."]):
                         if tag in u_str:
@@ -394,7 +566,6 @@ def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, 
                 raw_u = flickr_imgs[0].replace("\\/", "/")
                 best_img = f"https:{raw_u}" if raw_u.startswith("//") else raw_u
 
-        # 500px copyright-protected unwatermarked high-res discovery
         if platform == "500PX":
             px_id_match = re.search(r"500px\.com/photo/(\d+)", str(resp.url) or url)
             if px_id_match:
@@ -423,7 +594,7 @@ def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, 
 
         if video_url or best_img:
             return {
-                "title": title,
+                "title": title[:90],
                 "uploader": f"{platform.title()} Creator",
                 "duration": 0,
                 "thumbnail": best_img,
@@ -436,7 +607,7 @@ def extract_design_or_photo_page(url: str, platform: str) -> Optional[Dict[str, 
 
 
 def fetch_from_cobalt_instances(url: str, mode: str, quality: str) -> Optional[str]:
-    """Queries Cobalt v10 instances for fast direct streams (Instagram, TikTok, Reddit, Pinterest, Vimeo, Twitch, X)."""
+    """Queries Cobalt v10 instances for fast direct streams."""
     q_val = quality if quality in ["1080", "720", "480", "360"] else "1080"
     cobalt_hosts = [
         "https://cobalt-api.kwiatekmiki.com",
@@ -457,7 +628,7 @@ def fetch_from_cobalt_instances(url: str, mode: str, quality: str) -> Optional[s
             headers = {
                 "Accept": "application/json",
                 "Content-Type": "application/json",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0",
+                "User-Agent": CHROME_UA,
             }
             resp = cffi_requests.post(f"{host}/", json=payload, headers=headers, impersonate="chrome", timeout=6)
             if resp.status_code == 200:
@@ -488,7 +659,43 @@ def fast_fetch_info(url: str) -> dict:
         if cached_info and (time.time() - cached_info.get("_ts", 0) < 1800):
             return {k: v for k, v in cached_info.items() if k != "_ts"}
 
-    # Fast dedicated APIs first
+    # 1. Instagram Fast Extractor
+    if platform == "INSTAGRAM":
+        ig = extract_instagram_media(url)
+        if ig:
+            result = {
+                "title": ig["title"],
+                "uploader": ig["uploader"],
+                "duration": 0,
+                "duration_string": "Reel / Post HD",
+                "thumbnail": ig["thumbnail"],
+                "hd_thumbnail": ig["image_url"] or ig["thumbnail"],
+                "platform": platform,
+                "max_quality": "1080P HD",
+            }
+            with CACHE_LOCK:
+                INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
+            return result
+
+    # 2. Snapchat Fast Extractor
+    if platform == "SNAPCHAT":
+        sc = extract_snapchat_media(url)
+        if sc:
+            result = {
+                "title": sc["title"],
+                "uploader": sc["uploader"],
+                "duration": sc["duration"],
+                "duration_string": "Snap HD Ready",
+                "thumbnail": sc["thumbnail"],
+                "hd_thumbnail": sc["image_url"] or sc["thumbnail"],
+                "platform": platform,
+                "max_quality": "HD READY",
+            }
+            with CACHE_LOCK:
+                INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
+            return result
+
+    # 3. TikTok No-Watermark Fast Extractor
     if platform == "TIKTOK":
         tk = extract_tiktok_no_watermark(url)
         if tk:
@@ -506,6 +713,7 @@ def fast_fetch_info(url: str) -> dict:
                 INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
             return result
 
+    # 4. X / Twitter Fast Extractor
     if platform == "X / TWITTER":
         tw = extract_twitter_x_api(url)
         if tw:
@@ -523,6 +731,7 @@ def fast_fetch_info(url: str) -> dict:
                 INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
             return result
 
+    # 5. ArtStation Fast Extractor
     if platform == "ARTSTATION":
         art = extract_artstation_project(url)
         if art:
@@ -540,6 +749,7 @@ def fast_fetch_info(url: str) -> dict:
                 INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
             return result
 
+    # 6. Behance, Flickr, 500px, Pinterest Scraper
     if platform in ("BEHANCE", "FLICKR", "500PX", "PINTEREST"):
         scraped = extract_design_or_photo_page(url, platform)
         if scraped and (scraped.get("thumbnail") or scraped.get("video_url")):
@@ -557,7 +767,7 @@ def fast_fetch_info(url: str) -> dict:
                 INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
             return result
 
-    # Universal yt-dlp metadata fetch (Instagram, Facebook, Reddit, Vimeo, Twitch, SoundCloud, Threads, etc.)
+    # 7. Universal yt-dlp metadata fetch (without --impersonate error risk)
     cmd = [
         "yt-dlp",
         "--dump-json",
@@ -565,8 +775,8 @@ def fast_fetch_info(url: str) -> dict:
         "--no-warnings",
         "--no-check-certificates",
         "--geo-bypass",
-        "--impersonate",
-        "chrome",
+        "--user-agent",
+        CHROME_UA,
     ]
     if platform == "VIMEO":
         cmd += ["--referer", "https://vimeo.com/"]
@@ -596,7 +806,7 @@ def fast_fetch_info(url: str) -> dict:
     except Exception:
         pass
 
-    # Fallback OpenGraph scrape
+    # 8. Fallback OpenGraph scrape
     scraped = extract_design_or_photo_page(url, platform)
     if scraped:
         return {
@@ -636,7 +846,7 @@ def download_direct_url_to_file(
 ) -> Optional[Path]:
     """Downloads a direct MP4/Audio/Image URL and processes audio/mute if requested."""
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0"}
+        headers = {"User-Agent": CHROME_UA}
         if referer:
             headers["Referer"] = referer
         resp = cffi_requests.get(direct_url, headers=headers, impersonate="chrome", allow_redirects=True, timeout=45)
@@ -703,8 +913,8 @@ def download_with_ytdlp(
         "--geo-bypass",
         "--concurrent-fragments",
         "8",
-        "--impersonate",
-        "chrome",
+        "--user-agent",
+        CHROME_UA,
         "-o",
         raw_template,
     ]
@@ -726,7 +936,6 @@ def download_with_ytdlp(
         ]
     else:
         q_filter = f"[height<={quality}]" if str(quality).isdigit() else ""
-        # Always merge bestvideo+bestaudio so Reddit, Facebook, Vimeo, Twitch have full audio!
         fmt = (
             f"bestvideo{q_filter}/best{q_filter}/best"
             if is_muted
@@ -756,7 +965,7 @@ def download_with_ytdlp(
 
 
 def download_with_gallery_dl(url: str, job_dir: Path) -> Optional[Path]:
-    """Fallback using gallery-dl for Instagram stories/posts, Pinterest boards, ArtStation, Behance, Flickr, 500px, Reddit, X."""
+    """Fallback using gallery-dl for Instagram, Pinterest boards, ArtStation, Behance, Flickr, 500px, Reddit, X."""
     gdl_dir = job_dir / "gdl"
     gdl_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -774,7 +983,6 @@ def download_with_gallery_dl(url: str, job_dir: Path) -> Optional[Path]:
         subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         files = [f for f in gdl_dir.rglob("*") if f.is_file() and f.stat().st_size > 0]
         if files:
-            # Prefer video files (.mp4, .webm, .mov) if present, otherwise return highest-size image
             vids = [f for f in files if f.suffix.lower() in (".mp4", ".webm", ".mov", ".gif")]
             if vids:
                 return vids[0]
@@ -795,7 +1003,35 @@ def download_universal_media(
 ) -> Path:
     platform = detect_platform_name(url)
 
-    # 1. TikTok No-Watermark Fast Engine
+    # 1. Instagram Multi-Layer Engine
+    if platform == "INSTAGRAM":
+        ig = extract_instagram_media(url)
+        if ig and (ig.get("video_url") or ig.get("image_url")):
+            target_dl = ig.get("video_url") or ig.get("image_url")
+            res = download_direct_url_to_file(
+                target_dl, job_dir, mode, format_type, quality, is_muted, referer="https://www.instagram.com/"
+            )
+            if res:
+                return res
+
+    # 2. Snapchat (/t/ share links, Spotlight & Stories) Engine
+    if platform == "SNAPCHAT":
+        sc = extract_snapchat_media(url)
+        if sc:
+            if sc.get("video_url"):
+                res = download_direct_url_to_file(
+                    sc["video_url"], job_dir, mode, format_type, quality, is_muted, referer="https://www.snapchat.com/"
+                )
+                if res:
+                    return res
+            if sc.get("resolved_url") and sc["resolved_url"] != url:
+                res = download_with_ytdlp(
+                    sc["resolved_url"], job_dir, mode, format_type, quality, is_muted, referer="https://www.snapchat.com/"
+                )
+                if res:
+                    return res
+
+    # 3. TikTok No-Watermark Fast Engine
     if platform == "TIKTOK":
         tk = extract_tiktok_no_watermark(url)
         if tk:
@@ -804,7 +1040,7 @@ def download_universal_media(
             if res:
                 return res
 
-    # 2. X (Twitter) Video & GIF Engine (converts GIFs/MP4s cleanly)
+    # 4. X (Twitter) Video & GIF Engine
     if platform == "X / TWITTER":
         tw = extract_twitter_x_api(url)
         if tw and (tw.get("video_url") or tw.get("image_url")):
@@ -813,7 +1049,7 @@ def download_universal_media(
             if res:
                 return res
 
-    # 3. ArtStation 3D Shorts & 4K Artworks Engine
+    # 5. ArtStation 3D Shorts & 4K Artworks Engine
     if platform == "ARTSTATION":
         art = extract_artstation_project(url)
         if art:
@@ -854,14 +1090,13 @@ def download_universal_media(
                 if res:
                     return res
 
-    # 4. Vimeo Creator-Restricted & Embedded Videos Engine
+    # 6. Vimeo Creator-Restricted & Embedded Videos Engine
     if platform == "VIMEO":
         res = download_with_ytdlp(
             url, job_dir, mode, format_type, quality, is_muted, referer="https://vimeo.com/"
         )
         if res:
             return res
-        # Try player.vimeo.com bypass for creator-restricted embeds
         vm_match = re.search(r"vimeo\.com/(?:channels/[^/]+/|groups/[^/]+/videos/|video/)?(\d+)", url)
         if vm_match:
             player_url = f"https://player.vimeo.com/video/{vm_match.group(1)}"
@@ -877,19 +1112,19 @@ def download_universal_media(
             if res:
                 return res
 
-    # 5. Primary yt-dlp Engine (Instagram, Facebook, Reddit with Audio, Pinterest, Twitch VODs/Clips, Behance, SoundCloud, Threads)
+    # 7. Primary yt-dlp Engine (Facebook, Reddit + Audio, Pinterest, Twitch VODs/Clips, Instagram, Snapchat, etc.)
     res = download_with_ytdlp(url, job_dir, mode, format_type, quality, is_muted)
     if res:
         return res
 
-    # 6. Cobalt Mirror Tunnel Fallback (Great for Instagram Reels/Stories, Reddit, Pinterest, TikTok, Vimeo, Twitch)
+    # 8. Cobalt Mirror Tunnel Fallback
     cobalt_stream = fetch_from_cobalt_instances(url, mode, quality)
     if cobalt_stream:
         res = download_direct_url_to_file(cobalt_stream, job_dir, mode, format_type, quality, is_muted)
         if res:
             return res
 
-    # 7. Design & Photography Direct Scraper (Behance, Flickr, 500px, Pinterest, Instagram)
+    # 9. Design & Photography Direct Scraper (Behance, Flickr, 500px, Pinterest, etc.)
     scraped = extract_design_or_photo_page(url, platform)
     if scraped:
         target_dl = scraped.get("video_url") or scraped.get("image_url")
@@ -906,7 +1141,7 @@ def download_universal_media(
             if res:
                 return res
 
-    # 8. gallery-dl Universal Fallback (Pinterest Boards, Flickr, 500px, ArtStation, Behance, Instagram)
+    # 10. gallery-dl Universal Fallback
     gdl_file = download_with_gallery_dl(url, job_dir)
     if gdl_file:
         return gdl_file
@@ -930,7 +1165,7 @@ def cut_media_segment_exact(
     clip_duration = max(0.5, round(end_sec - start_sec, 2))
     cmd = ["ffmpeg", "-y"]
     if str(source_url).startswith("http"):
-        cmd += ["-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"]
+        cmd += ["-user_agent", CHROME_UA]
     cmd += ["-ss", str(start_sec), "-i", str(source_url), "-t", str(clip_duration)]
 
     if mode == "audio":
@@ -1031,7 +1266,7 @@ DEFAULT_FEEDBACK = [
         "type": "review",
         "platform": "INSTAGRAM",
         "rating": 5,
-        "message": "Instagram Reels, TikTok no-watermark aur ArtStation 3D shorts super fast download ho rahe hain!",
+        "message": "Instagram Reels, Snapchat Spotlight, TikTok no-watermark aur ArtStation 3D shorts super fast download ho rahe hain!",
         "status": "Verified User",
         "time": "Today",
     },
@@ -1112,7 +1347,7 @@ def download_hd_thumbnail(
     thumb_path = thumb_dir / f"{safe_title}.jpg"
 
     try:
-        headers = {"Referer": f"https://{urlparse(url).netloc}/"}
+        headers = {"User-Agent": CHROME_UA, "Referer": f"https://{urlparse(url).netloc}/"}
         resp = cffi_requests.get(thumb_url, headers=headers, impersonate="chrome", timeout=12)
         if resp.status_code != 200 and info.get("thumbnail"):
             resp = cffi_requests.get(info["thumbnail"], headers=headers, impersonate="chrome", timeout=12)
@@ -1247,7 +1482,6 @@ def stream_prepared_file(
     if not files:
         cleanup_dir(job_dir)
         raise HTTPException(status_code=404, detail="File not found.")
-    # Pick the final processed file (trimmed/muted/artwork/ytdlp_media)
     target_file = sorted(files, key=lambda x: x.stat().st_mtime, reverse=True)[0]
     safe_name = ascii_safe_filename(Path(filename).stem) + target_file.suffix
     background_tasks.add_task(cleanup_dir, job_dir)
