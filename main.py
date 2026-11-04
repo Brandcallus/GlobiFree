@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 from urllib.parse import quote, urlparse
 
-from fastapi import FastAPI, Form, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, Form, HTTPException, Query, BackgroundTasks, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from curl_cffi import requests as cffi_requests
@@ -1658,7 +1658,7 @@ def process_download_job(
 
 
 # =====================================================================
-# 6. API ROUTES
+# 6. API ROUTES (INCLUDING SEO ROBOTS.TXT & SITEMAP.XML)
 # =====================================================================
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health_check():
@@ -1669,6 +1669,31 @@ def health_check():
 def serve_home():
     html_path = Path("index.html")
     return html_path.read_text(encoding="utf-8") if html_path.exists() else "<h1>index.html not found</h1>"
+
+
+@app.get("/robots.txt", response_class=Response)
+def get_robots():
+    content = """User-agent: *
+Allow: /
+
+Sitemap: https://globifree.onrender.com/sitemap.xml
+"""
+    return Response(content=content, media_type="text/plain")
+
+
+@app.get("/sitemap.xml", response_class=Response)
+def get_sitemap():
+    today_date = time.strftime("%Y-%m-%d")
+    content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://globifree.onrender.com/</loc>
+    <lastmod>{today_date}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>"""
+    return Response(content=content, media_type="application/xml")
 
 
 @app.api_route("/api/info", methods=["GET", "POST"])
