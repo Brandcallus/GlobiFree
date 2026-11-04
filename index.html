@@ -116,13 +116,16 @@
         Download From Any Platform Instantly
       </h2>
       <p class="text-xs sm:text-sm text-slate-400 max-w-2xl mx-auto mb-5">
-        Save watermark-free HD videos, Reels, Stories, Reddit videos with audio, Twitch VODs, 3D shorts, protected photos, or cut exact 1-second to 5-minute clips.
+        Save watermark-free HD videos, Reels, Stories, Snapchat Spotlight, Reddit videos with audio, Twitch VODs, 3D shorts, protected photos, or cut exact 1-second to 5-minute clips.
       </p>
 
       <!-- Supported Platforms Bar -->
       <div class="flex flex-wrap items-center justify-center gap-2 max-w-3xl mx-auto">
         <span class="platform-pill px-3 py-1 rounded-full text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
           <i class="fa-brands fa-instagram text-pink-500"></i> Instagram
+        </span>
+        <span class="platform-pill px-3 py-1 rounded-full text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+          <i class="fa-brands fa-snapchat text-yellow-400"></i> Snapchat
         </span>
         <span class="platform-pill px-3 py-1 rounded-full text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
           <i class="fa-brands fa-facebook text-blue-500"></i> Facebook
@@ -173,7 +176,7 @@
       <div>
         <div class="flex items-center justify-between mb-2">
           <label for="mediaUrlInput" class="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-            Paste Any Reel, Story, Pin, Tweet, TikTok, VOD, 3D Short or Photo Link
+            Paste Any Reel, Story, Snap, Pin, Tweet, TikTok, VOD, 3D Short or Photo Link
           </label>
           <span id="platformDetectBadge" class="hidden text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 flex items-center gap-1.5">
             <i class="fa-solid fa-wand-magic-sparkles"></i>
@@ -187,7 +190,7 @@
             <input
               type="text"
               id="mediaUrlInput"
-              placeholder="Paste Instagram, Facebook, X, TikTok, Pinterest, Reddit, Vimeo, Twitch, ArtStation, Behance, Flickr or 500px link..."
+              placeholder="Paste Instagram, Snapchat, Facebook, X, TikTok, Pinterest, Reddit, Vimeo, Twitch, ArtStation, Behance, Flickr or 500px link..."
               class="w-full pl-11 pr-20 py-3.5 rounded-xl text-sm placeholder-slate-500 transition"
             />
             <button
@@ -485,7 +488,7 @@
             <span>User Reviews & Problem Reporter</span>
           </h3>
           <p class="text-xs text-slate-400 mt-0.5">
-            Facing an error with any link (Instagram, TikTok, Reddit, Vimeo, ArtStation, etc.) or loved the speed? Tell us below!
+            Facing an error with any link (Instagram, Snapchat, TikTok, Reddit, Vimeo, ArtStation, etc.) or loved the speed? Tell us below!
           </p>
         </div>
 
@@ -528,6 +531,7 @@
               <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Platform</label>
               <select id="fbPlatform" class="w-full px-3 py-2 rounded-lg text-xs font-semibold">
                 <option value="INSTAGRAM">Instagram</option>
+                <option value="SNAPCHAT">Snapchat</option>
                 <option value="FACEBOOK">Facebook</option>
                 <option value="X / TWITTER">X / Twitter</option>
                 <option value="TIKTOK">TikTok</option>
@@ -640,10 +644,17 @@
     let activeFeedbackFilter = 'all';
 
     mediaUrlInput.addEventListener('input', updatePlatformBadge);
+    mediaUrlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        fetchMediaDetails();
+      }
+    });
 
     function detectPlatformClient(val) {
       const u = val.toLowerCase();
       if (u.includes('instagram.com') || u.includes('instagr.am')) return { name: 'Instagram Detected', icon: 'fa-brands fa-instagram text-pink-400', platform: 'INSTAGRAM' };
+      if (u.includes('snapchat.com') || u.includes('snap.com')) return { name: 'Snapchat Detected', icon: 'fa-brands fa-snapchat text-yellow-400', platform: 'SNAPCHAT' };
       if (u.includes('facebook.com') || u.includes('fb.watch') || u.includes('fb.com')) return { name: 'Facebook Detected', icon: 'fa-brands fa-facebook text-blue-400', platform: 'FACEBOOK' };
       if (u.includes('twitter.com') || u.includes('x.com') || u.includes('t.co')) return { name: 'X / Twitter Detected', icon: 'fa-brands fa-x-twitter text-slate-200', platform: 'X / TWITTER' };
       if (u.includes('tiktok.com')) return { name: 'TikTok (No Watermark)', icon: 'fa-brands fa-tiktok text-cyan-400', platform: 'TIKTOK' };
@@ -805,6 +816,7 @@
       const url = mediaUrlInput.value.trim();
       if (!url) return showAlert('Please paste a valid media link first.', true);
 
+      updatePlatformBadge();
       alertBox.classList.add('hidden');
       fetchDetailsBtn.disabled = true;
       fetchDetailsBtn.innerHTML = '<i class="fa-solid fa-circle-notch spin-fast"></i> <span>Fetching...</span>';
@@ -843,7 +855,7 @@
         setTimeout(() => {
           prewarmBadge.className = 'text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1';
           prewarmBadge.innerHTML = '<i class="fa-solid fa-check"></i> Turbo Stream Ready';
-        }, 1500);
+        }, 1200);
 
       } catch (err) {
         showAlert(err.message, true);
@@ -1044,7 +1056,7 @@
           <div class="inner-box rounded-xl p-6 text-center text-xs text-slate-400">
             No items in this tab yet. Be the first to post!
           </div>
-        ;
+        `;
         return;
       }
 
@@ -1110,6 +1122,7 @@
       }
     }
 
+    updatePlatformBadge();
     renderHistory();
     loadFeedback();
   </script>
