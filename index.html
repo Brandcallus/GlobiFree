@@ -74,7 +74,7 @@
       border-color: rgba(99, 102, 241, 0.45);
       transform: translateY(-1px);
     }
-    .spin-fast { animation: spin 0.75s linear infinite; }
+    .spin-fast { animation: spin 0.6s linear infinite; }
     @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   </style>
 </head>
@@ -395,7 +395,7 @@
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
                 <span class="text-[11px] font-extrabold uppercase tracking-wider text-purple-400">
-                  <i class="fa-solid fa-hashtag mr-1"></i>1. Video Hashtags
+                  <i class="fa-solid fa-hashtag mr-1"></i>1. Video Hashtags (Title & Description)
                 </span>
                 <span id="hashtagCountBadge" class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
                   0 Hashtags
@@ -414,7 +414,7 @@
             </div>
             <div
               id="hashtagsContainer"
-              class="max-h-28 overflow-y-auto p-3 rounded-xl bg-slate-950/90 border border-purple-500/20 flex flex-wrap gap-1.5 text-xs"
+              class="max-h-32 overflow-y-auto p-3 rounded-xl bg-slate-950/90 border border-purple-500/20 flex flex-wrap gap-1.5 text-xs"
             >
               <span class="text-slate-400 italic text-xs">There is no hashtag in this video</span>
             </div>
@@ -444,7 +444,7 @@
             </div>
             <div
               id="keywordsContainer"
-              class="max-h-28 overflow-y-auto p-3 rounded-xl bg-slate-950/90 border border-amber-500/20 flex flex-wrap gap-1.5 text-xs"
+              class="max-h-32 overflow-y-auto p-3 rounded-xl bg-slate-950/90 border border-amber-500/20 flex flex-wrap gap-1.5 text-xs"
             >
               <span class="text-slate-400 italic text-xs">There are no keywords in this video</span>
             </div>
@@ -519,7 +519,7 @@
         <!-- RIGHT COLUMN: VIDEO DOWNLOAD BAR + AUDIO DOWNLOAD BAR (7 Cols) -->
         <div class="lg:col-span-7 flex flex-col justify-between gap-4">
 
-          <!-- YOUTUBE RESTRICTION NOTICE BANNER (Clean single notice when YouTube is detected) -->
+          <!-- YOUTUBE RESTRICTION NOTICE BANNER -->
           <div
             id="youtubeNoticeBanner"
             class="hidden rounded-xl p-4 bg-amber-500/10 border border-amber-500/35 text-amber-200 text-xs leading-relaxed flex items-start gap-3"
@@ -566,7 +566,7 @@
               </div>
               <div class="sm:col-span-3">
                 <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Quality</label>
-                <select id="videoQualitySelect" onchange="prewarmSelection('video')" class="w-full px-3 py-2.5 rounded-xl text-xs font-semibold">
+                <select id="videoQualitySelect" class="w-full px-3 py-2.5 rounded-xl text-xs font-semibold">
                   <option value="1080" selected>1080p HD</option>
                   <option value="720">720p HD</option>
                   <option value="480">480p</option>
@@ -603,7 +603,7 @@
               </div>
               <div class="sm:col-span-3">
                 <label class="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Format</label>
-                <select id="audioFormatSelect" onchange="prewarmSelection('audio')" class="w-full px-3 py-2.5 rounded-xl text-xs font-semibold">
+                <select id="audioFormatSelect" class="w-full px-3 py-2.5 rounded-xl text-xs font-semibold">
                   <option value="mp3" selected>MP3</option>
                   <option value="m4a">M4A</option>
                   <option value="wav">WAV</option>
@@ -836,9 +836,6 @@
     let allFeedbackItems = [];
     let activeFeedbackFilter = 'all';
 
-    // =========================================================================
-    // SMART URL CLEANER (Strips extra share text like "Check out this clip! ...")
-    // =========================================================================
     function extractCleanUrlFromText(rawText) {
       const str = String(rawText || '').trim();
       if (!str) return '';
@@ -854,7 +851,6 @@
       return u.includes('youtube.com') || u.includes('youtu.be') || u.includes('youtube-nocookie.com');
     }
 
-    // Updates Download Buttons & Banner cleanly when YouTube link is pasted vs other platforms
     function setYouTubeRestrictionUI(isYt) {
       isYouTubeCurrent = Boolean(isYt);
       if (isYouTubeCurrent) {
@@ -971,9 +967,6 @@
       alertBox.classList.remove('hidden');
     }
 
-    // =========================================================================
-    // HASHTAGS (TOP) & KEYWORDS (BOTTOM) PANEL FUNCTIONS
-    // =========================================================================
     function toggleHashtagsPanel() {
       document.getElementById('hashtagsPanel').classList.toggle('hidden');
     }
@@ -996,7 +989,6 @@
       summarySubtext.textContent = `${currentHashtags.length} Hashtags • ${currentKeywords.length} SEO Keywords found`;
       btnLabel.textContent = `Hashtags (${currentHashtags.length + currentKeywords.length})`;
 
-      // 1. Render Top Section: Hashtags
       if (!currentHashtags.length) {
         hashtagsContainer.innerHTML = `<span class="text-slate-400 italic text-xs py-1">There is no hashtag in this video</span>`;
         copyHashtagsBtn.disabled = true;
@@ -1009,7 +1001,6 @@
         `).join('');
       }
 
-      // 2. Render Bottom Section: Keywords
       if (!currentKeywords.length) {
         keywordsContainer.innerHTML = `<span class="text-slate-400 italic text-xs py-1">There are no keywords in this video</span>`;
         copyKeywordsBtn.disabled = true;
@@ -1043,9 +1034,6 @@
       } catch (e) {}
     }
 
-    // =========================================================================
-    // PRECISION TRIMMER FUNCTIONS
-    // =========================================================================
     function secondsToTime(sec) {
       const s = Math.max(0, Math.floor(Number(sec) || 0));
       const hrs = Math.floor(s / 3600);
@@ -1137,17 +1125,6 @@
       document.getElementById('trimmerPanel').classList.add('hidden');
     }
 
-    function prewarmSelection(mode) {
-      const url = extractCleanUrlFromText(mediaUrlInput.value);
-      if (!url || checkIsYouTubeUrl(url)) return;
-      const formData = new FormData();
-      formData.append('url', url);
-      formData.append('mode', mode);
-      formData.append('format_type', mode === 'video' ? videoFormatSelect.value : audioFormatSelect.value);
-      formData.append('quality', mode === 'video' ? videoQualitySelect.value : audioQualitySelect.value);
-      fetch(`${API_BASE}/api/prewarm`, { method: 'POST', body: formData }).catch(() => {});
-    }
-
     function downloadThumbnail() {
       const url = extractCleanUrlFromText(mediaUrlInput.value);
       if (!url) return showAlert('Please paste a link first.', true);
@@ -1170,13 +1147,7 @@
       fetchDetailsBtn.innerHTML = '<i class="fa-solid fa-circle-notch spin-fast"></i> <span>Fetching...</span>';
 
       try {
-        const formData = new FormData();
-        formData.append('url', url);
-
-        let res = await fetch(`${API_BASE}/api/info`, { method: 'POST', body: formData });
-        if (!res.ok) {
-          res = await fetch(`${API_BASE}/api/info?url=${encodeURIComponent(url)}`);
-        }
+        const res = await fetch(`${API_BASE}/api/info?url=${encodeURIComponent(url)}`);
         if (!res.ok) {
           const errJson = await res.json().catch(() => ({}));
           throw new Error(errJson.detail || 'Could not fetch media details. Please check if the link is valid and public.');
@@ -1208,7 +1179,6 @@
         } else {
           prewarmBadge.className = 'text-[10px] font-bold px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5';
           prewarmBadge.innerHTML = '<i class="fa-solid fa-check"></i> Turbo Stream Ready';
-          prewarmSelection('video');
         }
 
         mediaPreviewCard.classList.remove('hidden');
@@ -1255,8 +1225,8 @@
       progressSection.classList.remove('hidden');
 
       const clipNote = isTrimActive ? ` [Clip ${secondsToTime(savedStartSeconds)}-${secondsToTime(savedEndSeconds)}]` : '';
-      progressBar.style.width = '30%';
-      progressPercent.textContent = '30%';
+      progressBar.style.width = '35%';
+      progressPercent.textContent = '35%';
       statusText.innerHTML = `<i class="fa-solid fa-bolt fa-beat text-amber-400 mr-1"></i> Preparing ${isVideo ? quality + 'p ' + formatType.toUpperCase() + ' Video' : formatType.toUpperCase() + ' Audio'}${clipNote}...`;
 
       try {
@@ -1286,16 +1256,16 @@
         let data = await response.json();
 
         while (data.status === 'processing' && data.job_id) {
-          const pct = data.progress || 50;
+          const pct = data.progress || 55;
           progressBar.style.width = `${pct}%`;
           progressPercent.textContent = `${pct}%`;
           statusText.innerHTML = `<i class="fa-solid fa-circle-notch spin-fast text-indigo-400 mr-1"></i> ${
             isTrimActive && pct >= 85
               ? 'Cutting exact custom clip with FFmpeg...'
-              : `Extracting real video/audio stream (${pct}%)...`
+              : `Extracting high-speed stream (${pct}%)...`
           }`;
 
-          await new Promise(r => setTimeout(r, 700));
+          await new Promise(r => setTimeout(r, 400));
 
           const pollRes = await fetch(
             `${API_BASE}/api/job_status?job_id=${encodeURIComponent(data.job_id)}&filename=${encodeURIComponent(data.filename || '')}`
@@ -1487,7 +1457,7 @@
       }
     }
 
-    // Silent 5-Minute Keep-Alive Ping (No visible UI clutter)
+    // Silent 5-Minute Keep-Alive Ping
     setInterval(() => {
       fetch(`${API_BASE}/health`).catch(() => {});
     }, 300000);
