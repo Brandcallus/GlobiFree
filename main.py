@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 from urllib.parse import quote, urlparse
 
-from fastapi import FastAPI, Form, HTTPException, Query, BackgroundTasks, Response
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi import FastAPI, Form, HTTPException, Query, BackgroundTasks, Response, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from curl_cffi import requests as cffi_requests
 
@@ -25,7 +25,7 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Disposition", "Content-Length"],
+    expose_headers=["Content-Disposition", "Content-Length", "Content-Range", "Accept-Ranges"],
 )
 
 TEMP_DIR = Path("/tmp/globifree_downloads")
@@ -1010,6 +1010,63 @@ def fetch_from_cobalt_instances(url: str, mode: str, quality: str) -> Optional[s
     return None
 
 
+def resolve_direct_stream_url(raw_url: str) -> Optional[str]:
+    """Resolves a direct playable MP4/stream URL for any supported platform for live preview & fast FFmpeg cutting."""
+    url = extract_clean_url(raw_url)
+    if not url or is_youtube_url(url):
+        return None
+
+    with CACHE_LOCK:
+        cached = INFO_CACHE.get(url.strip()) or {}
+    if cached.get("_video_url") and is_safe_media_url(cached.get("_video_url")):
+        return cached["_video_url"]
+
+    try:
+        fast_fetch_info(url)
+        with CACHE_LOCK:
+            cached = INFO_CACHE.get(url.strip()) or {}
+        if cached.get("_video_url") and is_safe_media_url(cached.get("_video_url")):
+            return cached["_video_url"]
+    except Exception:
+        pass
+
+    cobalt_u = fetch_from_cobalt_instances(url, "video", "720")
+    if cobalt_u and is_safe_media_url(cobalt_u):
+        with CACHE_LOCK:
+            if url.strip() in INFO_CACHE:
+                INFO_CACHE[url.strip()]["_video_url"] = cobalt_u
+        return cobalt_u
+
+    try:
+        cmd = [
+            "yt-dlp",
+            "-g",
+            "-f",
+            "best[ext=mp4]/best",
+            "--no-playlist",
+            "--no-warnings",
+            "--no-check-certificates",
+            "--geo-bypass",
+            "--user-agent",
+            CHROME_UA,
+            url,
+        ]
+        if COOKIES_FILE.exists():
+            cmd += ["--cookies", str(COOKIES_FILE)]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=7)
+        if proc.returncode == 0 and proc.stdout.strip():
+            first_url = proc.stdout.strip().splitlines()[0].strip()
+            if is_safe_media_url(first_url):
+                with CACHE_LOCK:
+                    if url.strip() in INFO_CACHE:
+                        INFO_CACHE[url.strip()]["_video_url"] = first_url
+                return first_url
+    except Exception:
+        pass
+
+    return None
+
+
 # =====================================================================
 # 2. ULTRA-FAST INFO FETCH (< 0.6 SECOND)
 # =====================================================================
@@ -1203,6 +1260,7 @@ def fast_fetch_info(raw_url: str) -> dict:
             info = json.loads(proc.stdout.splitlines()[0])
             duration = info.get("duration") or 0
             thumb = info.get("thumbnail") or ""
+            direct_v = info.get("url") if is_safe_media_url(info.get("url")) else None
             result = {
                 "title": info.get("title") or f"{platform.title()} Media",
                 "uploader": info.get("uploader") or info.get("channel") or platform.title(),
@@ -1214,7 +1272,7 @@ def fast_fetch_info(raw_url: str) -> dict:
                 "max_quality": "HD READY",
             }
             with CACHE_LOCK:
-                INFO_CACHE[cache_key] = {**result, "_ts": time.time()}
+                INFO_CACHE[cache_key] = {**result, "_video_url": direct_v, "_ts": time.time()}
             return result
     except Exception:
         pass
@@ -1623,24 +1681,45 @@ def process_download_job(
     has_trim = start_sec is not None and end_sec is not None and end_sec > start_sec
 
     try:
-        update_job(job_id, progress=55)
-        downloaded_file = download_universal_media(
-            url, job_dir, mode, format_type, quality, is_muted and not has_trim
-        )
+        downloaded_file: Optional[Path] = None
 
+        # Fast-path: When trimming is active, try cutting directly from the remote stream URL via FFmpeg
         if has_trim:
-            update_job(job_id, progress=88)
-            trimmed_out = job_dir / f"trimmed.{format_type}"
-            downloaded_file = cut_media_segment_exact(
-                str(downloaded_file),
-                trimmed_out,
-                start_sec,
-                end_sec,
-                mode,
-                format_type,
-                quality,
-                is_muted,
+            update_job(job_id, progress=65)
+            direct_stream = resolve_direct_stream_url(url)
+            if direct_stream:
+                trimmed_direct = job_dir / f"trimmed_direct.{format_type}"
+                cut_media_segment_exact(
+                    direct_stream,
+                    trimmed_direct,
+                    start_sec,
+                    end_sec,
+                    mode,
+                    format_type,
+                    quality,
+                    is_muted,
+                )
+                if trimmed_direct.exists() and trimmed_direct.stat().st_size > 1024:
+                    downloaded_file = trimmed_direct
+
+        if not downloaded_file:
+            update_job(job_id, progress=55)
+            downloaded_file = download_universal_media(
+                url, job_dir, mode, format_type, quality, is_muted and not has_trim
             )
+            if has_trim:
+                update_job(job_id, progress=88)
+                trimmed_out = job_dir / f"trimmed.{format_type}"
+                downloaded_file = cut_media_segment_exact(
+                    str(downloaded_file),
+                    trimmed_out,
+                    start_sec,
+                    end_sec,
+                    mode,
+                    format_type,
+                    quality,
+                    is_muted,
+                )
 
         final_ext = downloaded_file.suffix.lstrip(".") or format_type
         local_filename = f"{safe_header_title}.{final_ext}"
@@ -1658,7 +1737,7 @@ def process_download_job(
 
 
 # =====================================================================
-# 6. API ROUTES (INCLUDING SEO ROBOTS.TXT & SITEMAP.XML)
+# 6. API ROUTES (INCLUDING SEO ROBOTS.TXT, SITEMAP.XML & LIVE STREAM PROXY)
 # =====================================================================
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health_check():
@@ -1705,6 +1784,66 @@ def api_info(
     if not target_url:
         raise HTTPException(status_code=400, detail="URL is required.")
     return fast_fetch_info(target_url)
+
+
+@app.get("/api/preview_stream")
+def api_preview_stream(request: Request, url: str = Query(...)):
+    """Streams remote video with Range support so the browser video player can seek & preview any platform."""
+    clean_url = extract_clean_url(url)
+    if not clean_url or is_youtube_url(clean_url):
+        raise HTTPException(status_code=400, detail="Preview not available for this URL.")
+
+    direct_url = resolve_direct_stream_url(clean_url)
+    if not direct_url:
+        raise HTTPException(status_code=404, detail="Direct preview stream not found.")
+
+    req_headers = {
+        "User-Agent": CHROME_UA,
+        "Referer": f"https://{urlparse(clean_url).netloc}/",
+    }
+    range_header = request.headers.get("range")
+    if range_header:
+        req_headers["Range"] = range_header
+
+    try:
+        upstream = cffi_requests.get(
+            direct_url,
+            headers=req_headers,
+            impersonate="chrome",
+            allow_redirects=True,
+            stream=True,
+            timeout=25,
+        )
+        resp_headers = {
+            "Accept-Ranges": "bytes",
+            "Access-Control-Allow-Origin": "*",
+        }
+        for h_name in ("Content-Length", "Content-Range", "Content-Type"):
+            val = upstream.headers.get(h_name) or upstream.headers.get(h_name.lower())
+            if val:
+                resp_headers[h_name] = val
+
+        media_type = resp_headers.get("Content-Type", "video/mp4")
+
+        def _iter_chunks():
+            try:
+                for chunk in upstream.iter_content(chunk_size=65536):
+                    if chunk:
+                        yield chunk
+            finally:
+                try:
+                    upstream.close()
+                except Exception:
+                    pass
+
+        return StreamingResponse(
+            _iter_chunks(),
+            status_code=upstream.status_code if upstream.status_code in (200, 206) else 200,
+            headers=resp_headers,
+            media_type=media_type,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Preview stream error: {str(e)}")
 
 
 @app.get("/api/thumbnail")
