@@ -186,6 +186,8 @@ def is_url_actual_video(candidate_url: str, referer: str = "https://www.snapchat
         resp = cffi_requests.get(
             candidate_url, headers=headers, impersonate="chrome", allow_redirects=True, timeout=4
         )
+        if resp.status_code not in (200, 206):
+            return False
         ctype = (resp.headers.get("content-type") or "").lower()
         if "video/" in ctype:
             return True
@@ -588,8 +590,34 @@ def extract_instagram_media(url: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _expand_unwatermarked_bolt_urls(raw_url: str) -> List[str]:
+    """
+    Snapchat's Bolt CDN (cf-st.sc-cdn.net/d/<hash>.27) uses profile '.27' for
+    watermarked share videos. Stripping '.27' or using player profiles yields
+    the original clean, watermark-free video stream.
+    """
+    u = raw_url.replace("\\u0026", "&").replace("\\/", "/").strip()
+    if not u.startswith("http"):
+        return []
+    out: List[str] = []
+    if "cf-st.sc-cdn.net/d/" in u and re.search(r"\.27(?=\?|$)", u):
+        # 1. Raw original upload without transcode profile .27
+        no_prof_no_query = re.sub(r"\.27(?:\?.*)?$", "", u)
+        no_prof_with_query = re.sub(r"\.27(?=\?|$)", "", u)
+        out.append(no_prof_no_query)
+        if no_prof_with_query != no_prof_no_query:
+            out.append(no_prof_with_query)
+        # 2. Clean web player transcode profiles (no watermark)
+        for prof in (".1054", ".256", ".111", ".80"):
+            out.append(re.sub(r"\.27(?=\?|$)", prof, u))
+            out.append(re.sub(r"\.27(?:\?.*)?$", prof, u))
+    else:
+        out.append(u)
+    return out
+
+
 def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
-    """Extracts verified MP4 video and HD thumbnail from Snapchat Spotlight and Stories."""
+    """Extracts clean, NO-WATERMARK MP4 video and HD thumbnail from Snapchat Spotlight & Stories."""
     try:
         resp = cffi_requests.get(
             url,
@@ -601,11 +629,20 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
         resolved_url = str(resp.url) or url
         page = resp.text if resp.status_code == 200 else ""
 
-        spot_m = re.search(r"/spotlight/([A-Za-z0-9_-]+)", resolved_url) or re.search(
+        # Strip tracking/share_id query params that trigger Snapchat's watermarked share state
+        clean_resolved_base = resolved_url.split("?")[0].rstrip("/")
+        spot_m = re.search(r"/spotlight/([A-Za-z0-9_-]+)", clean_resolved_base) or re.search(
             r"/spotlight/([A-Za-z0-9_-]+)", url
         )
-        canonical_url = f"https://www.snapchat.com/spotlight/{spot_m.group(1)}" if spot_m else resolved_url
-        if spot_m and "/@" in resolved_url:
+        target_spot_id = spot_m.group(1) if spot_m else None
+        canonical_url = (
+            f"https://www.snapchat.com/spotlight/{target_spot_id}"
+            if target_spot_id
+            else clean_resolved_base
+        )
+
+        # Always fetch the clean canonical URL without ?share_id= or /@username if redirected from /t/
+        if canonical_url != resolved_url:
             try:
                 c_resp = cffi_requests.get(
                     canonical_url,
@@ -624,8 +661,13 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
         thumb_url = ""
         video_url = None
         duration = 0
-        candidate_videos: List[str] = []
 
+        # Separate clean player URLs from watermarked SEO/share URLs
+        priority_clean_videos: List[str] = []
+        general_clean_videos: List[str] = []
+        watermarked_share_videos: List[str] = []
+
+        # 1. Extract metadata from ld+json (keep contentUrl only in watermarked fallback)
         ld_blocks = re.findall(
             r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', page, re.S | re.I
         )
@@ -636,18 +678,19 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
                 for item in items:
                     if isinstance(item, dict) and item.get("@type") == "VideoObject":
                         if item.get("contentUrl"):
-                            candidate_videos.append(item["contentUrl"])
-                        if item.get("thumbnailUrl"):
+                            watermarked_share_videos.append(item["contentUrl"])
+                        if item.get("thumbnailUrl") and not thumb_url:
                             t_val = item["thumbnailUrl"]
                             thumb_url = t_val[0] if isinstance(t_val, list) and t_val else str(t_val)
                         if item.get("name") or item.get("description"):
-                            title = item.get("name") or item.get("description")
+                            title = item.get("name") or item.get("description") or title
                         creator = item.get("creator") or item.get("author") or {}
                         if isinstance(creator, dict) and creator.get("name"):
                             uploader = creator["name"]
             except Exception:
                 pass
 
+        # 2. Parse __NEXT_DATA__ for raw player snapUrls (NO WATERMARK)
         next_m = re.search(
             r'<script id="__NEXT_DATA__" type="application/json"[^>]*>(.*?)</script>',
             page,
@@ -658,10 +701,11 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
                 next_json = json.loads(next_m.group(1))
                 page_props = (next_json.get("props") or {}).get("pageProps") or {}
 
+                # videoMetadata.contentUrl is the watermarked SEO file -> store only in fallback!
                 vid_meta = page_props.get("videoMetadata") or {}
                 if isinstance(vid_meta, dict):
                     if vid_meta.get("contentUrl"):
-                        candidate_videos.insert(0, vid_meta["contentUrl"])
+                        watermarked_share_videos.append(vid_meta["contentUrl"])
                     if vid_meta.get("thumbnailUrl") and not thumb_url:
                         thumb_url = vid_meta["thumbnailUrl"]
                     if vid_meta.get("name") or vid_meta.get("description"):
@@ -670,27 +714,48 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
                     if isinstance(creator_obj, dict) and creator_obj.get("name"):
                         uploader = creator_obj["name"]
 
-                def _walk_snap(obj: Any):
+                def _walk_snap(obj: Any, is_matched_context: bool = False):
                     if isinstance(obj, dict):
+                        # Check if this object matches the exact Spotlight/Story ID
+                        obj_str_ids = " ".join(
+                            str(obj.get(k) or "") for k in ("storyId", "snapId", "id", "highlightId")
+                        )
+                        matched_here = is_matched_context or bool(
+                            target_spot_id and target_spot_id in obj_str_ids
+                        )
+
                         snap_urls = obj.get("snapUrls")
-                        if isinstance(snap_urls, dict) and snap_urls.get("mediaUrl"):
-                            if obj.get("snapMediaType") == 1:
-                                candidate_videos.insert(0, snap_urls["mediaUrl"])
-                            else:
-                                candidate_videos.append(snap_urls["mediaUrl"])
+                        if isinstance(snap_urls, dict):
+                            for url_key in ("mediaOriginalUrl", "mediaUrl", "videoUrl"):
+                                raw_m = snap_urls.get(url_key)
+                                if isinstance(raw_m, dict):
+                                    raw_m = raw_m.get("value") or raw_m.get("url")
+                                if isinstance(raw_m, str) and raw_m.startswith("http"):
+                                    if matched_here:
+                                        priority_clean_videos.append(raw_m)
+                                    else:
+                                        general_clean_videos.append(raw_m)
+
                             prev_u = snap_urls.get("mediaPreviewUrl")
                             if isinstance(prev_u, dict) and prev_u.get("value"):
                                 nonlocal thumb_url
                                 if not thumb_url:
                                     thumb_url = prev_u["value"]
+
                         for k, v in obj.items():
-                            if k in ("contentUrl", "videoUrl", "mediaUrl") and isinstance(v, str) and v.startswith("http"):
-                                candidate_videos.append(v)
+                            # Skip videoMetadata & linkPreview so watermarked share URLs don't pollute clean list
+                            if k in ("videoMetadata", "linkPreview", "pageMetadata"):
+                                continue
+                            if k in ("mediaOriginalUrl", "mediaUrl", "videoUrl") and isinstance(v, str) and v.startswith("http"):
+                                if matched_here:
+                                    priority_clean_videos.append(v)
+                                else:
+                                    general_clean_videos.append(v)
                             else:
-                                _walk_snap(v)
+                                _walk_snap(v, matched_here)
                     elif isinstance(obj, list):
                         for elem in obj:
-                            _walk_snap(elem)
+                            _walk_snap(elem, is_matched_context)
 
                 _walk_snap(page_props)
             except Exception:
@@ -703,7 +768,7 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
         ):
             m_vid = re.search(pat, page, re.I)
             if m_vid:
-                candidate_videos.append(html.unescape(m_vid.group(1)))
+                watermarked_share_videos.append(html.unescape(m_vid.group(1)))
 
         if not thumb_url:
             og_i = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', page, re.I)
@@ -714,15 +779,45 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
         if og_t and title == "Snapchat Spotlight Video":
             title = html.unescape(og_t.group(1)).strip()
 
+        # Build ordered candidate list:
+        # 1st: Unwatermarked Bolt variants of priority & general snapUrls
+        # 2nd: Unwatermarked Bolt variants derived by stripping '.27' from share URLs
+        # 3rd: Cobalt API clean stream
+        # 4th: Raw watermarked share URLs (only as absolute last resort)
+        ordered_clean_candidates: List[str] = []
+        for raw_c in priority_clean_videos + general_clean_videos:
+            ordered_clean_candidates.extend(_expand_unwatermarked_bolt_urls(raw_c))
+
+        for wm_c in watermarked_share_videos:
+            for exp_u in _expand_unwatermarked_bolt_urls(wm_c):
+                if not re.search(r"\.27(?=\?|$)", exp_u):
+                    ordered_clean_candidates.append(exp_u)
+
         seen = set()
-        for cand in candidate_videos:
-            clean_c = cand.replace("\\u0026", "&").replace("\\/", "/")
-            if clean_c in seen:
+        for cand in ordered_clean_candidates:
+            if cand in seen or re.search(r"\.27(?=\?|$)", cand):
                 continue
-            seen.add(clean_c)
-            if is_url_actual_video(clean_c, referer="https://www.snapchat.com/"):
-                video_url = clean_c
+            seen.add(cand)
+            if is_url_actual_video(cand, referer="https://www.snapchat.com/"):
+                video_url = cand
                 break
+
+        # If no clean direct CDN stream matched yet, try Cobalt instances for clean stream
+        if not video_url:
+            cobalt_clean = fetch_from_cobalt_instances(canonical_url, "video", "1080")
+            if cobalt_clean and is_url_actual_video(cobalt_clean, referer="https://www.snapchat.com/"):
+                video_url = cobalt_clean
+
+        # Last-resort fallback if everything else failed
+        if not video_url:
+            for wm_cand in priority_clean_videos + general_clean_videos + watermarked_share_videos:
+                clean_c = wm_cand.replace("\\u0026", "&").replace("\\/", "/").strip()
+                if clean_c in seen:
+                    continue
+                seen.add(clean_c)
+                if is_url_actual_video(clean_c, referer="https://www.snapchat.com/"):
+                    video_url = clean_c
+                    break
 
         return {
             "title": title[:90],
@@ -1142,7 +1237,7 @@ def fast_fetch_info(raw_url: str) -> dict:
                 "thumbnail": sc["thumbnail"],
                 "hd_thumbnail": sc["image_url"] or sc["thumbnail"],
                 "platform": platform,
-                "max_quality": "HD VIDEO",
+                "max_quality": "NO WATERMARK HD",
             }
             with CACHE_LOCK:
                 INFO_CACHE[cache_key] = {
