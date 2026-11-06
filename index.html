@@ -43,7 +43,7 @@
         "name": "How can I cut or trim a specific clip from an online video without downloading the full video?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Paste your video link on GlobiFree, click on Cut Custom Clip inside the Precision Clip Trimmer box, enter your start and end timestamps (from 1 second up to 5 minutes), lock the clip range, and download only the selected portion."
+          "text": "Paste your video link on GlobiFree, click on Cut Custom Clip inside the Precision Clip Trimmer box, use the live video preview and drag the timeline handles (from 1 second up to 5 minutes), lock the clip range, and download only the selected portion."
         }
       },
       {
@@ -68,6 +68,10 @@
 
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <!-- noUiSlider for Dual-Handle Interactive Video Timeline Trimming -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/15.7.1/nouislider.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/15.7.1/nouislider.min.js"></script>
+
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
     body {
@@ -144,6 +148,37 @@
     }
     .spin-fast { animation: spin 0.6s linear infinite; }
     @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+    /* Custom Styling for Dual-Handle Video Timeline Slider */
+    #trimTimelineSlider {
+      height: 10px;
+      background: #0f172a;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 9999px;
+      box-shadow: inset 0 2px 4px rgba(0,0,0,0.6);
+    }
+    #trimTimelineSlider .noUi-connect {
+      background: linear-gradient(90deg, #6366f1, #a855f7, #ec4899);
+    }
+    #trimTimelineSlider .noUi-handle {
+      width: 22px;
+      height: 22px;
+      right: -11px;
+      top: -7px;
+      border-radius: 9999px;
+      background: #ffffff;
+      border: 3px solid #6366f1;
+      box-shadow: 0 0 12px rgba(99, 102, 241, 0.85);
+      cursor: grab;
+    }
+    #trimTimelineSlider .noUi-handle:active {
+      cursor: grabbing;
+      transform: scale(1.1);
+    }
+    #trimTimelineSlider .noUi-handle::before,
+    #trimTimelineSlider .noUi-handle::after {
+      display: none;
+    }
   </style>
 
   <!-- Adsterra Ad Code -->
@@ -316,7 +351,7 @@
         </div>
       </div>
 
-      <!-- 3. PRECISION VIDEO/AUDIO CLIP TRIMMER STUDIO -->
+      <!-- 3. PRECISION VIDEO/AUDIO CLIP TRIMMER STUDIO (WITH LIVE PREVIEW & DUAL SLIDER) -->
       <div id="trimmerBox" class="inner-box rounded-xl p-4 border border-indigo-500/20">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div class="flex items-center gap-3">
@@ -331,7 +366,7 @@
                 </span>
               </div>
               <p id="trimSubtext" class="text-[11px] text-slate-400 mt-0.5">
-                Want only a 1-second scene or a 1–2 minute part? Cut the exact timestamp without downloading the full video!
+                Watch live preview, drag the timeline handles to pick your exact scene, and download only that clip!
               </p>
             </div>
           </div>
@@ -349,6 +384,72 @@
 
         <!-- Expandable Precision Trimmer Controls -->
         <div id="trimmerPanel" class="hidden mt-4 pt-4 border-t border-white/10 space-y-4">
+
+          <!-- LIVE INTERACTIVE VIDEO PREVIEW + TIMELINE SLIDER -->
+          <div class="bg-[#060913]/90 border border-white/10 rounded-xl p-3.5 space-y-3.5">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
+                <i class="fa-solid fa-circle-play"></i> Live Video Preview & Visual Timeline Cutter
+              </span>
+              <div class="flex items-center gap-2">
+                <span id="previewPlayerStatus" class="text-[11px] text-slate-400">
+                  Paste a link & click Fetch Fast to preview video
+                </span>
+                <button type="button" onclick="toggleTrimmerPanel()" class="text-xs text-slate-400 hover:text-white ml-2">
+                  <i class="fa-solid fa-xmark mr-1"></i>Close
+                </button>
+              </div>
+            </div>
+
+            <!-- Online Video Player Container -->
+            <div class="relative w-full max-w-2xl mx-auto rounded-xl overflow-hidden bg-black border border-white/10 aspect-video flex items-center justify-center">
+              <video
+                id="trimVideoPlayer"
+                class="w-full h-full object-contain"
+                controls
+                playsinline
+                preload="metadata"
+              ></video>
+              <div id="videoLoadingOverlay" class="hidden absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center gap-2 text-xs text-slate-200 z-10">
+                <i class="fa-solid fa-circle-notch spin-fast text-indigo-400 text-2xl"></i>
+                <span id="videoLoadingText">Loading live video stream for trimming...</span>
+              </div>
+            </div>
+
+            <!-- Interactive Dual-Handle Range Slider -->
+            <div class="px-2 pt-2 pb-1 space-y-2.5">
+              <div id="trimTimelineSlider"></div>
+              <div class="flex flex-wrap items-center justify-between text-[11px] text-slate-400 gap-2 pt-1">
+                <span><i class="fa-solid fa-hand-pointer text-indigo-400 mr-1"></i>Drag left handle for <b>Start</b> & right handle for <b>End</b></span>
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onclick="setPointFromCurrentTime('start')"
+                    class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold transition"
+                  >
+                    <i class="fa-solid fa-Stopwatch mr-1 text-indigo-400"></i>Set Start = Current Frame
+                  </button>
+                  <button
+                    type="button"
+                    onclick="setPointFromCurrentTime('end')"
+                    class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold transition"
+                  >
+                    <i class="fa-solid fa-flag-checkered mr-1 text-pink-400"></i>Set End = Current Frame
+                  </button>
+                  <button
+                    type="button"
+                    id="loopClipBtn"
+                    onclick="previewSelectedClipLoop()"
+                    class="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 font-semibold transition"
+                  >
+                    <i class="fa-solid fa-play mr-1"></i>Preview Clip
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Cut Presets -->
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div class="flex flex-wrap items-center gap-2">
               <span class="text-[10px] font-bold uppercase text-indigo-400 mr-1">
@@ -367,9 +468,6 @@
                 1m (0:00 - 1:00)
               </button>
             </div>
-            <button type="button" onclick="toggleTrimmerPanel()" class="text-xs text-slate-400 hover:text-white">
-              <i class="fa-solid fa-xmark mr-1"></i>Close
-            </button>
           </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
@@ -380,7 +478,7 @@
               <input
                 type="text"
                 id="trimStartInput"
-                oninput="updateLiveClipLength()"
+                oninput="onManualTimeInputChange('start')"
                 placeholder="00:00"
                 value="00:00"
                 class="w-full px-3.5 py-2.5 rounded-xl text-xs font-semibold"
@@ -393,7 +491,7 @@
               <input
                 type="text"
                 id="trimEndInput"
-                oninput="updateLiveClipLength()"
+                oninput="onManualTimeInputChange('end')"
                 placeholder="00:15"
                 value="00:15"
                 class="w-full px-3.5 py-2.5 rounded-xl text-xs font-semibold"
@@ -405,8 +503,8 @@
             </div>
           </div>
 
-          <div class="flex items-center justify-between pt-1">
-            <span class="text-[11px] text-slate-400">Only the selected timestamp range will be downloaded.</span>
+          <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
+            <span class="text-[11px] text-slate-400">Only the selected timestamp range will be cut & downloaded online.</span>
             <div class="flex items-center gap-2">
               <button type="button" onclick="clearTrim()" class="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">
                 Reset (Full Video)
@@ -649,7 +747,7 @@
             <i class="fa-solid fa-chevron-down text-indigo-400 text-xs transition-transform group-open:rotate-180"></i>
           </summary>
           <p class="text-xs text-slate-400 mt-2.5 leading-relaxed">
-            Click on <strong>Cut Custom Clip</strong> inside the Precision Clip Trimmer studio. Enter your exact Start Time and End Time (between 1 second and 5 minutes), press <strong>Lock Clip Range</strong>, and hit Download to save only that exact scene.
+            Click on <strong>Cut Custom Clip</strong> inside the Precision Clip Trimmer studio. Watch the live video preview, drag the start and end handles on the timeline slider (between 1 second and 5 minutes), press <strong>Lock Clip Range</strong>, and hit Download to save only that exact scene.
           </p>
         </details>
 
@@ -751,10 +849,155 @@
     const downloadAudioBtnText = document.getElementById('downloadAudioBtnText');
     const trimToggleBtn = document.getElementById('trimToggleBtn');
 
+    // Live Video Preview & Dual Slider Elements
+    const trimVideoPlayer = document.getElementById('trimVideoPlayer');
+    const videoLoadingOverlay = document.getElementById('videoLoadingOverlay');
+    const videoLoadingText = document.getElementById('videoLoadingText');
+    const previewPlayerStatus = document.getElementById('previewPlayerStatus');
+    const trimTimelineSlider = document.getElementById('trimTimelineSlider');
+
     let isTrimActive = false;
     let savedStartSeconds = null;
     let savedEndSeconds = null;
     let isYouTubeCurrent = false;
+    let currentVideoDuration = 60;
+    let lastLoadedPreviewUrl = '';
+    let isSliderUpdatingInputs = false;
+    let isLoopingPreview = false;
+
+    // Initialize Dual-Handle Timeline Slider
+    noUiSlider.create(trimTimelineSlider, {
+      start: [0, 15],
+      connect: true,
+      step: 0.1,
+      range: {
+        min: 0,
+        max: 60
+      }
+    });
+
+    trimTimelineSlider.noUiSlider.on('slide', (values, handle) => {
+      isSliderUpdatingInputs = true;
+      const startVal = parseFloat(values[0]);
+      const endVal = parseFloat(values[1]);
+
+      document.getElementById('trimStartInput').value = secondsToTime(startVal);
+      document.getElementById('trimEndInput').value = secondsToTime(endVal);
+      updateLiveClipLength();
+
+      if (trimVideoPlayer && trimVideoPlayer.readyState >= 1) {
+        trimVideoPlayer.pause();
+        trimVideoPlayer.currentTime = handle === 0 ? startVal : endVal;
+      }
+      isSliderUpdatingInputs = false;
+    });
+
+    // Keep preview playback inside selected range when Preview Clip is active
+    trimVideoPlayer.addEventListener('timeupdate', () => {
+      if (!isLoopingPreview) return;
+      const e = parseTimeToSeconds(document.getElementById('trimEndInput').value);
+      const s = parseTimeToSeconds(document.getElementById('trimStartInput').value) || 0;
+      if (e !== null && trimVideoPlayer.currentTime >= e) {
+        trimVideoPlayer.currentTime = s;
+        trimVideoPlayer.play().catch(() => {});
+      }
+    });
+
+    trimVideoPlayer.addEventListener('loadedmetadata', () => {
+      videoLoadingOverlay.classList.add('hidden');
+      const dur = Number(trimVideoPlayer.duration);
+      if (dur && isFinite(dur) && dur > 1) {
+        setupSliderForDuration(dur);
+        previewPlayerStatus.innerHTML = `<span class="text-emerald-400 font-semibold"><i class="fa-solid fa-check mr-1"></i>Live Stream Loaded (${secondsToTime(dur)})</span>`;
+      } else {
+        previewPlayerStatus.innerHTML = `<span class="text-emerald-400 font-semibold"><i class="fa-solid fa-check mr-1"></i>Live Stream Ready</span>`;
+      }
+    });
+
+    trimVideoPlayer.addEventListener('error', () => {
+      videoLoadingOverlay.classList.add('hidden');
+      previewPlayerStatus.innerHTML = `<span class="text-amber-300"><i class="fa-solid fa-circle-info mr-1"></i>Direct preview stream restricted by platform — use timestamps or presets below</span>`;
+    });
+
+    function setupSliderForDuration(durationSec) {
+      currentVideoDuration = Math.max(2, Math.ceil(durationSec));
+      const defaultEnd = Math.min(15, currentVideoDuration);
+      trimTimelineSlider.noUiSlider.updateOptions({
+        range: {
+          min: 0,
+          max: currentVideoDuration
+        },
+        start: [0, defaultEnd]
+      });
+      document.getElementById('trimStartInput').value = secondsToTime(0);
+      document.getElementById('trimEndInput').value = secondsToTime(defaultEnd);
+      updateLiveClipLength();
+    }
+
+    async function loadLiveVideoPreview(cleanUrl) {
+      if (!cleanUrl || checkIsYouTubeUrl(cleanUrl)) return;
+      if (lastLoadedPreviewUrl === cleanUrl && trimVideoPlayer.src) return;
+
+      lastLoadedPreviewUrl = cleanUrl;
+      isLoopingPreview = false;
+      videoLoadingOverlay.classList.remove('hidden');
+      videoLoadingText.textContent = 'Connecting live stream for visual trimming...';
+      previewPlayerStatus.textContent = 'Fetching stream...';
+
+      const streamProxyUrl = `${API_BASE}/api/preview_stream?url=${encodeURIComponent(cleanUrl)}`;
+      trimVideoPlayer.src = streamProxyUrl;
+      trimVideoPlayer.load();
+    }
+
+    function setPointFromCurrentTime(which) {
+      if (!trimVideoPlayer || !trimVideoPlayer.readyState) {
+        return showAlert('Play or seek the video first to capture the current frame time.', true);
+      }
+      const cur = Math.floor(trimVideoPlayer.currentTime * 10) / 10;
+      const currentVals = trimTimelineSlider.noUiSlider.get().map(Number);
+      if (which === 'start') {
+        const newEnd = cur >= currentVals[1] ? Math.min(currentVideoDuration, cur + 5) : currentVals[1];
+        trimTimelineSlider.noUiSlider.set([cur, newEnd]);
+        document.getElementById('trimStartInput').value = secondsToTime(cur);
+        document.getElementById('trimEndInput').value = secondsToTime(newEnd);
+      } else {
+        const newStart = cur <= currentVals[0] ? Math.max(0, cur - 5) : currentVals[0];
+        trimTimelineSlider.noUiSlider.set([newStart, cur]);
+        document.getElementById('trimStartInput').value = secondsToTime(newStart);
+        document.getElementById('trimEndInput').value = secondsToTime(cur);
+      }
+      updateLiveClipLength();
+    }
+
+    function previewSelectedClipLoop() {
+      const s = parseTimeToSeconds(document.getElementById('trimStartInput').value) || 0;
+      const e = parseTimeToSeconds(document.getElementById('trimEndInput').value) || 15;
+      if (!trimVideoPlayer || !trimVideoPlayer.src) {
+        return showAlert('Please paste a video link and click Fetch Fast first.', true);
+      }
+      isLoopingPreview = true;
+      trimVideoPlayer.currentTime = s;
+      trimVideoPlayer.play().catch(() => {});
+    }
+
+    function onManualTimeInputChange(which) {
+      updateLiveClipLength();
+      if (isSliderUpdatingInputs) return;
+      const s = parseTimeToSeconds(document.getElementById('trimStartInput').value);
+      const e = parseTimeToSeconds(document.getElementById('trimEndInput').value);
+      if (s !== null && e !== null && e > s) {
+        if (e > currentVideoDuration) {
+          currentVideoDuration = Math.ceil(e + 10);
+          trimTimelineSlider.noUiSlider.updateOptions({
+            range: { min: 0, max: currentVideoDuration }
+          });
+        }
+        trimTimelineSlider.noUiSlider.set([s, e]);
+        if (trimVideoPlayer && trimVideoPlayer.readyState >= 1) {
+          trimVideoPlayer.currentTime = which === 'start' ? s : e;
+        }
+      }
+    }
 
     function extractCleanUrlFromText(rawText) {
       const str = String(rawText || '').trim();
@@ -911,11 +1154,28 @@
 
     function toggleTrimmerPanel() {
       if (isYouTubeCurrent) return;
-      document.getElementById('trimmerPanel').classList.toggle('hidden');
+      const panel = document.getElementById('trimmerPanel');
+      panel.classList.toggle('hidden');
       updateLiveClipLength();
+
+      if (!panel.classList.contains('hidden')) {
+        const cleanUrl = extractCleanUrlFromText(mediaUrlInput.value);
+        if (cleanUrl) {
+          loadLiveVideoPreview(cleanUrl);
+        }
+      } else {
+        if (trimVideoPlayer) trimVideoPlayer.pause();
+      }
     }
 
     function setQuickTrim(startSec, endSec) {
+      if (endSec > currentVideoDuration) {
+        currentVideoDuration = endSec;
+        trimTimelineSlider.noUiSlider.updateOptions({
+          range: { min: 0, max: currentVideoDuration }
+        });
+      }
+      trimTimelineSlider.noUiSlider.set([startSec, endSec]);
       document.getElementById('trimStartInput').value = secondsToTime(startSec);
       document.getElementById('trimEndInput').value = secondsToTime(endSec);
       updateLiveClipLength();
@@ -951,6 +1211,8 @@
       savedStartSeconds = startSec;
       savedEndSeconds = endSec;
 
+      if (trimVideoPlayer) trimVideoPlayer.pause();
+
       const rangeLabel = `${secondsToTime(startSec)} – ${secondsToTime(endSec)}`;
       const clipLen = Math.round((endSec - startSec) * 10) / 10;
       document.getElementById('trimActivePill').classList.remove('hidden');
@@ -961,15 +1223,17 @@
         downloadAudioBtnText.textContent = `Download Audio Clip`;
       }
       document.getElementById('trimmerPanel').classList.add('hidden');
-      showAlert(`<i class="fa-solid fa-scissors mr-1.5"></i> Clip Trimmer Active: Only <b>${rangeLabel} (${clipLen} seconds)</b> will be downloaded!`, false);
+      showAlert(`<i class="fa-solid fa-scissors mr-1.5"></i> Clip Trimmer Active: Only <b>${rangeLabel} (${clipLen} seconds)</b> will be cut & downloaded!`, false);
     }
 
     function clearTrim() {
       isTrimActive = false;
       savedStartSeconds = null;
       savedEndSeconds = null;
+      isLoopingPreview = false;
+      if (trimVideoPlayer) trimVideoPlayer.pause();
       document.getElementById('trimActivePill').classList.add('hidden');
-      document.getElementById('trimSubtext').textContent = 'Want only a 1-second scene or a 1–2 minute part? Cut the exact timestamp without downloading the full video!';
+      document.getElementById('trimSubtext').textContent = 'Watch live preview, drag the timeline handles to pick your exact scene, and download only that clip!';
       document.getElementById('trimBtnLabel').textContent = 'Cut Custom Clip';
       if (!isYouTubeCurrent) {
         downloadVideoBtnText.textContent = 'Download Full HD Video';
@@ -1030,6 +1294,10 @@
           imageFileName.value = data.title;
         }
 
+        if (data.duration && Number(data.duration) > 1) {
+          setupSliderForDuration(Number(data.duration));
+        }
+
         const isYt = Boolean(data.youtube_restricted) || checkIsYouTubeUrl(url);
         setYouTubeRestrictionUI(isYt);
 
@@ -1039,6 +1307,11 @@
         } else {
           prewarmBadge.className = 'text-[10px] font-bold px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5';
           prewarmBadge.innerHTML = '<i class="fa-solid fa-check"></i> Turbo Stream Ready';
+          // Preload live video into trimmer if trimmer panel is open or ready
+          lastLoadedPreviewUrl = '';
+          if (!document.getElementById('trimmerPanel').classList.contains('hidden')) {
+            loadLiveVideoPreview(url);
+          }
         }
 
         mediaPreviewCard.classList.remove('hidden');
