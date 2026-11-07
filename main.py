@@ -8,9 +8,10 @@ import shutil
 import html
 import threading
 import subprocess
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Deque
 from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, Form, HTTPException, Query, BackgroundTasks, Response, Request
@@ -18,12 +19,24 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 from fastapi.middleware.cors import CORSMiddleware
 from curl_cffi import requests as cffi_requests
 
-app = FastAPI(title="GlobiFree Media Downloader Pro")
+# =====================================================================
+# APP INITIALIZATION (SWAGGER /DOCS, /REDOC & /OPENAPI.JSON DISABLED)
+# =====================================================================
+app = FastAPI(
+    title="GlobiFree Media Downloader Pro",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=[
+        "https://globifree.onrender.com",
+        "http://localhost:7860",
+        "http://127.0.0.1:7860",
+    ],
+    allow_methods=["GET", "POST", "HEAD"],
     allow_headers=["*"],
     expose_headers=["Content-Disposition", "Content-Length", "Content-Range", "Accept-Ranges"],
 )
@@ -37,6 +50,31 @@ JOBS: Dict[str, Dict[str, Any]] = {}
 
 CACHE_LOCK = threading.Lock()
 JOBS_LOCK = threading.Lock()
+
+# =====================================================================
+# SECURITY & RATE LIMITING CONFIG (40 REQUESTS / MINUTE PER IP)
+# =====================================================================
+RATE_LIMIT_MAX_REQUESTS = 40
+RATE_LIMIT_WINDOW_SECONDS = 60
+POLL_LIMIT_MAX_REQUESTS = 240  # Separate buffer for progress polling & video range scrubbing
+
+RATE_LIMIT_LOCK = threading.Lock()
+IP_ACTION_HITS: Dict[str, Deque[float]] = {}
+IP_POLL_HITS: Dict[str, Deque[float]] = {}
+
+BLOCKED_BOT_USER_AGENTS = (
+    "python-requests",
+    "python-urllib",
+    "curl/",
+    "wget/",
+    "postmanruntime",
+    "insomnia",
+    "httpx",
+    "aiohttp",
+    "go-http-client",
+    "axios/",
+    "node-fetch",
+)
 
 YOUTUBE_RESTRICTION_MESSAGE = (
     "For YouTube, no download formats other than the thumbnail are currently available."
@@ -64,6 +102,87 @@ BLOCKED_AD_DOMAINS = (
     "/landers/",
     "main.php?lp_key",
 )
+
+
+def get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else "unknown"
+
+
+@app.middleware("http")
+async def api_security_and_rate_limit_middleware(request: Request, call_next):
+    path = request.url.path
+
+    # Only enforce API guard & rate limiting on /api/* routes
+    if path.startswith("/api/"):
+        ua = (request.headers.get("user-agent") or "").lower()
+        if not ua or any(bot_ua in ua for bot_ua in BLOCKED_BOT_USER_AGENTS):
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Unauthorized client. Direct script or bot access is disabled."},
+            )
+
+        # Verify request comes from the GlobiFree website UI (Origin / Referer / Sec-Fetch-Site)
+        host = (request.headers.get("host") or "").lower()
+        origin = (request.headers.get("origin") or "").lower()
+        referer = (request.headers.get("referer") or "").lower()
+        sec_fetch_site = (request.headers.get("sec-fetch-site") or "").lower()
+        sec_fetch_mode = (request.headers.get("sec-fetch-mode") or "").lower()
+
+        allowed_hosts = [h for h in (host, "globifree.onrender.com", "localhost", "127.0.0.1") if h]
+        has_valid_origin = any(h in origin for h in allowed_hosts) if origin else False
+        has_valid_referer = any(h in referer for h in allowed_hosts) if referer else False
+        is_same_origin = sec_fetch_site == "same-origin"
+
+        # Block direct browser address-bar navigation to JSON APIs (e.g. typing /api/info in URL bar)
+        if path in ("/api/info", "/api/prepare", "/api/prewarm", "/api/job_status"):
+            if sec_fetch_mode == "navigate" or not (is_same_origin or has_valid_origin or has_valid_referer):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Direct API access is disabled. Please use the GlobiFree web interface."},
+                )
+        elif path in ("/api/thumbnail", "/api/preview_stream"):
+            if not (is_same_origin or has_valid_origin or has_valid_referer):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Direct API access is disabled. Please use the GlobiFree web interface."},
+                )
+
+        # Check IP Rate Limit (40 requests / 60s for main API actions)
+        client_ip = get_client_ip(request)
+        now = time.time()
+        is_poll_or_stream = path.startswith(("/api/job_status", "/api/preview_stream", "/api/stream/"))
+
+        with RATE_LIMIT_LOCK:
+            bucket_map = IP_POLL_HITS if is_poll_or_stream else IP_ACTION_HITS
+            max_allowed = POLL_LIMIT_MAX_REQUESTS if is_poll_or_stream else RATE_LIMIT_MAX_REQUESTS
+
+            hits = bucket_map.get(client_ip)
+            if hits is None:
+                hits = deque()
+                bucket_map[client_ip] = hits
+
+            while hits and (now - hits[0]) > RATE_LIMIT_WINDOW_SECONDS:
+                hits.popleft()
+
+            if len(hits) >= max_allowed:
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "detail": f"Rate limit exceeded ({RATE_LIMIT_MAX_REQUESTS} requests/minute). Please wait a few seconds and try again."
+                    },
+                )
+            hits.append(now)
+
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    return response
 
 
 # =====================================================================
@@ -238,6 +357,12 @@ def cleanup_old_temp_files(max_age_sec: int = 900):
         expired_jobs = [jid for jid, jdata in JOBS.items() if now - jdata.get("ts", 0) > max_age_sec]
         for jid in expired_jobs:
             JOBS.pop(jid, None)
+
+    with RATE_LIMIT_LOCK:
+        for bucket in (IP_ACTION_HITS, IP_POLL_HITS):
+            stale_ips = [ip for ip, q in bucket.items() if not q or (now - q[-1]) > 120]
+            for ip in stale_ips:
+                bucket.pop(ip, None)
 
 
 def format_duration(seconds: Optional[float]) -> str:
@@ -601,13 +726,11 @@ def _expand_unwatermarked_bolt_urls(raw_url: str) -> List[str]:
         return []
     out: List[str] = []
     if "cf-st.sc-cdn.net/d/" in u and re.search(r"\.27(?=\?|$)", u):
-        # 1. Raw original upload without transcode profile .27
         no_prof_no_query = re.sub(r"\.27(?:\?.*)?$", "", u)
         no_prof_with_query = re.sub(r"\.27(?=\?|$)", "", u)
         out.append(no_prof_no_query)
         if no_prof_with_query != no_prof_no_query:
             out.append(no_prof_with_query)
-        # 2. Clean web player transcode profiles (no watermark)
         for prof in (".1054", ".256", ".111", ".80"):
             out.append(re.sub(r"\.27(?=\?|$)", prof, u))
             out.append(re.sub(r"\.27(?:\?.*)?$", prof, u))
@@ -629,7 +752,6 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
         resolved_url = str(resp.url) or url
         page = resp.text if resp.status_code == 200 else ""
 
-        # Strip tracking/share_id query params that trigger Snapchat's watermarked share state
         clean_resolved_base = resolved_url.split("?")[0].rstrip("/")
         spot_m = re.search(r"/spotlight/([A-Za-z0-9_-]+)", clean_resolved_base) or re.search(
             r"/spotlight/([A-Za-z0-9_-]+)", url
@@ -641,7 +763,6 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
             else clean_resolved_base
         )
 
-        # Always fetch the clean canonical URL without ?share_id= or /@username if redirected from /t/
         if canonical_url != resolved_url:
             try:
                 c_resp = cffi_requests.get(
@@ -662,12 +783,10 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
         video_url = None
         duration = 0
 
-        # Separate clean player URLs from watermarked SEO/share URLs
         priority_clean_videos: List[str] = []
         general_clean_videos: List[str] = []
         watermarked_share_videos: List[str] = []
 
-        # 1. Extract metadata from ld+json (keep contentUrl only in watermarked fallback)
         ld_blocks = re.findall(
             r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', page, re.S | re.I
         )
@@ -690,7 +809,6 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
             except Exception:
                 pass
 
-        # 2. Parse __NEXT_DATA__ for raw player snapUrls (NO WATERMARK)
         next_m = re.search(
             r'<script id="__NEXT_DATA__" type="application/json"[^>]*>(.*?)</script>',
             page,
@@ -701,7 +819,6 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
                 next_json = json.loads(next_m.group(1))
                 page_props = (next_json.get("props") or {}).get("pageProps") or {}
 
-                # videoMetadata.contentUrl is the watermarked SEO file -> store only in fallback!
                 vid_meta = page_props.get("videoMetadata") or {}
                 if isinstance(vid_meta, dict):
                     if vid_meta.get("contentUrl"):
@@ -716,7 +833,6 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
 
                 def _walk_snap(obj: Any, is_matched_context: bool = False):
                     if isinstance(obj, dict):
-                        # Check if this object matches the exact Spotlight/Story ID
                         obj_str_ids = " ".join(
                             str(obj.get(k) or "") for k in ("storyId", "snapId", "id", "highlightId")
                         )
@@ -743,7 +859,6 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
                                     thumb_url = prev_u["value"]
 
                         for k, v in obj.items():
-                            # Skip videoMetadata & linkPreview so watermarked share URLs don't pollute clean list
                             if k in ("videoMetadata", "linkPreview", "pageMetadata"):
                                 continue
                             if k in ("mediaOriginalUrl", "mediaUrl", "videoUrl") and isinstance(v, str) and v.startswith("http"):
@@ -779,11 +894,6 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
         if og_t and title == "Snapchat Spotlight Video":
             title = html.unescape(og_t.group(1)).strip()
 
-        # Build ordered candidate list:
-        # 1st: Unwatermarked Bolt variants of priority & general snapUrls
-        # 2nd: Unwatermarked Bolt variants derived by stripping '.27' from share URLs
-        # 3rd: Cobalt API clean stream
-        # 4th: Raw watermarked share URLs (only as absolute last resort)
         ordered_clean_candidates: List[str] = []
         for raw_c in priority_clean_videos + general_clean_videos:
             ordered_clean_candidates.extend(_expand_unwatermarked_bolt_urls(raw_c))
@@ -802,13 +912,11 @@ def extract_snapchat_media(url: str) -> Optional[Dict[str, Any]]:
                 video_url = cand
                 break
 
-        # If no clean direct CDN stream matched yet, try Cobalt instances for clean stream
         if not video_url:
             cobalt_clean = fetch_from_cobalt_instances(canonical_url, "video", "1080")
             if cobalt_clean and is_url_actual_video(cobalt_clean, referer="https://www.snapchat.com/"):
                 video_url = cobalt_clean
 
-        # Last-resort fallback if everything else failed
         if not video_url:
             for wm_cand in priority_clean_videos + general_clean_videos + watermarked_share_videos:
                 clean_c = wm_cand.replace("\\u0026", "&").replace("\\/", "/").strip()
@@ -1778,7 +1886,6 @@ def process_download_job(
     try:
         downloaded_file: Optional[Path] = None
 
-        # Fast-path: When trimming is active, try cutting directly from the remote stream URL via FFmpeg
         if has_trim:
             update_job(job_id, progress=65)
             direct_stream = resolve_direct_stream_url(url)
@@ -1849,6 +1956,7 @@ def serve_home():
 def get_robots():
     content = """User-agent: *
 Allow: /
+Disallow: /api/
 
 Sitemap: https://globifree.onrender.com/sitemap.xml
 """
